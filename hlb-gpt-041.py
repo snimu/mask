@@ -11,6 +11,9 @@ try:
 except NameError:
   pass ## we're still good
 """
+from typing import Literal
+import itertools
+import argparse
 import functools
 from functools import partial
 import subprocess
@@ -22,6 +25,7 @@ import os
 import torch
 import torch.nn.functional as F
 from torch import nn
+import polars as pl
 
 # This seems like one of the best choices right now for a fast/lightweight/simple tokenizer.
 import tiktoken
@@ -107,6 +111,19 @@ hyp = {
 }
 
 
+def change_gpu_token_capacity(factor: float):
+    global gpu_token_capacity
+    gpu_token_capacity = factor * 114688
+
+
+def change_model_scale(scale: float):
+    global model_scale, tokens_per_batch_capacity, hyp
+    model_scale = scale
+    tokens_per_batch_capacity  = math.floor(gpu_token_capacity / (1.52174 + .482 * model_scale**(.87)))
+    hyp['net']['residual_depth'] = to_nearest_64(384 * math.log2(1.+model_scale))
+    hyp['net']['num_blocks'] = round(8 * math.log2(1.+model_scale))
+
+
 #############################################
 #                Dataloader                 #
 #############################################
@@ -162,9 +179,13 @@ else:
 with torch.no_grad():
     # Create the base arrays for the learnable linear positional bias. This helps save some memory consumption & processing time
     bias_range                    = torch.arange(-hyp['misc']['sequence_length']['max']+1, 1).to(hyp['misc']['device'], torch.bfloat16)
-    position_bias_base            = bias_range.unsqueeze(0) - bias_range.unsqueeze(1)
+    position_bias_base_forward    = bias_range.unsqueeze(0) - bias_range.unsqueeze(1)
+    position_bias_base_backward   = position_bias_base_forward.flip(0)
+    position_bias_base            = position_bias_base_forward
     negative_infinity_matrix_base = torch.empty_like(position_bias_base).fill_(-float("inf"))
-    causal_mask = torch.tril(torch.ones((hyp['misc']['sequence_length']['max'], hyp['misc']['sequence_length']['max']), device=hyp['misc']['device'], dtype=torch.bool))
+    causal_mask_forward = torch.tril(torch.ones((hyp['misc']['sequence_length']['max'], hyp['misc']['sequence_length']['max']), device=hyp['misc']['device'], dtype=torch.bool))
+    causal_mask_backward = torch.tril(torch.ones((hyp['misc']['sequence_length']['max'], hyp['misc']['sequence_length']['max']), device=hyp['misc']['device'], dtype=torch.bool)).flip(0)
+    causal_mask = causal_mask_forward
 
 
 # Used in the dataloader to select indexes in a sequence. Preallocated for slight efficiency.
@@ -194,11 +215,13 @@ class LatentAttentionBlock(nn.Module):
         # Has a high lr mult applied to it so that each layer can learn its own attention scale.
         self.position_bias_mult = nn.Parameter(torch.tensor(1., device='cuda'))
 
-    def forward(self, x):
+    def forward(self, x, causality: Literal["forward", "backward"] = "forward"):
         residual = x
-
         # Make additive attention mask, scaled by a learned mult for the position bias (lets us learn dynamic attention ranges per layer as needed)
-        attn_mask = torch.where(causal_mask[:x.shape[1], :x.shape[1]], F.softplus(self.position_bias_mult) * position_bias_base[:x.shape[1], :x.shape[1]], negative_infinity_matrix_base[:x.shape[1], :x.shape[1]])
+        if causality == "forward":
+            attn_mask = torch.where(causal_mask[:x.shape[1], :x.shape[1]], F.softplus(self.position_bias_mult) * position_bias_base[:x.shape[1], :x.shape[1]], negative_infinity_matrix_base[:x.shape[1], :x.shape[1]])
+        else:
+            attn_mask = torch.where(causal_mask[x.shape[1]:, x.shape[1]:], F.softplus(self.position_bias_mult) * position_bias_base[x.shape[1]:, x.shape[1]:], negative_infinity_matrix_base[x.shape[1]:, x.shape[1]:])
 
         # Shared LayerNorm for linear layers and attention
         x = self.norm(x)
@@ -348,7 +371,7 @@ def grow_sequence_length(old_length, old_batchsize):
 #          Logging           #
 ##############################
 
-variables_to_log = ['epoch', 'curr_step', 'train_loss', 'val_loss', 'val_perplexity', 'train_acc', 'val_acc', 'grad_norm', 'microbatch_steps', 'total_seconds']
+variables_to_log = ['epoch', 'curr_step', 'train_loss', 'val_loss_fw', 'val_loss_bw', 'val_pplx_fw', 'val_pplx_bw', 'train_acc', 'val_acc_fw', 'val_pplx_bw', 'total_seconds']
 # define the printing function and print the column heads
 def print_training_details(columns_list, separator_left='  ', separator_right='  |', column_labels_only=False, is_final_entry=False):
     output_line = "|" # start with the left bar
@@ -391,21 +414,41 @@ def eval(net):
     num_eval_steps           = num_eval_sequences//eval_batchsize
 
     # float32 here to prevent truncation errors
-    val_loss, val_acc = torch.tensor(0., device=hyp['misc']['device'], dtype=torch.float), torch.tensor(0., device=hyp['misc']['device'], dtype=torch.float)
+    val_loss_forward, val_acc_forward = torch.tensor(0., device=hyp['misc']['device'], dtype=torch.float), torch.tensor(0., device=hyp['misc']['device'], dtype=torch.float)
+    val_loss_backward, val_acc_backward = torch.tensor(0., device=hyp['misc']['device'], dtype=torch.float), torch.tensor(0., device=hyp['misc']['device'], dtype=torch.float)
+    global causal_mask, causal_mask_forward, causal_mask_backward, position_bias_base, position_bias_base_forward, position_bias_base_backward
 
     with torch.no_grad():
         # Note: We eval at the maximum sequence length so that we can get an idea of how well the sequence length growing extrapolates out
         for _ in range(num_eval_steps):
+            causal_mask = causal_mask_forward
+            position_bias_base = position_bias_base_forward
             inputs, targets = get_batch(data, key='eval', batchsize=eval_batchsize, length=hyp['misc']['sequence_length']['max'])
             outputs = net(inputs)
-            val_loss += 1./num_eval_steps * loss_fn(outputs.flatten(0, 1).float(), targets.flatten(0, 1))
-            val_acc  += 1./num_eval_steps * (outputs.argmax(-1) == targets).float().mean()
+            val_loss_forward += 1./num_eval_steps * loss_fn(outputs.flatten(0, 1).float(), targets.flatten(0, 1))
+            val_acc_forward  += 1./num_eval_steps * (outputs.argmax(-1) == targets).float().mean()
 
-        val_perplexity = 2.71828 ** val_loss
+            causal_mask = causal_mask_backward
+            position_bias_base = position_bias_base_backward
+            inputs, targets = targets, inputs
+            outputs = net(inputs)
+            val_loss_backward += 1./num_eval_steps * loss_fn(outputs.flatten(0, 1).float(), targets.flatten(0, 1))
+            val_acc_backward  += 1./num_eval_steps * (outputs.argmax(-1) == targets).float().mean()
+            
+        val_perplexity_forward = 2.71828 ** val_loss_forward
+        val_perplexity_backward = 2.71828 ** val_loss_backward
 
-    return val_acc.item(), val_loss.item(), val_perplexity.item()
+    return (
+        val_acc_forward.item(), val_loss_forward.item(), val_perplexity_forward.item(),
+        val_acc_backward.item(), val_loss_backward.item(), val_perplexity_backward.item(),
+    )
 
-def main():
+def train(
+        mask: str, 
+        num_tokens_train: int, num_tokens_val: int, 
+        num_epochs_train: int, num_epochs_val: int, 
+        num_steps_train: int, num_steps_val: int,
+):
 
     #################
     #     Init      #
@@ -427,7 +470,15 @@ def main():
     assert final_batchsize > 1, f"Error: Specified configuration takes up too much memory (calculated final batchsize {final_batchsize} is less than 1!)"
 
     # Validation parameters
-    val_loss, val_acc, val_perplexity = None, None, None
+    val_loss_fw, val_acc_fw, val_pplx_fw, val_loss_bw, val_acc_bw, val_pplx_bw = None, None, None, None, None, None
+
+    train_losses, train_accs = [], []
+    val_losses_forward, val_accs_forward, val_pplxs_forward = [], [], []
+    val_losses_backward, val_accs_backward, val_pplxs_backward = [], [], []
+    tokens_seen_list_train, epoch_list_train, steps_list_train = [], [], []
+    epoch_by_distinct_tokens_seen_list_train = []
+    tokens_seen_list_val, epoch_list_val, steps_list_val = [], [], []
+    cumulative_times_val, epoch_by_distinct_tokens_seen_list_val = [], []
 
     # Get network
     net = make_net()
@@ -487,17 +538,36 @@ def main():
     starter.record()
 
     net.train()
+    global causal_mask_forward, causal_mask_backward, causal_mask, position_bias_base_forward, position_bias_base_backward, position_bias_base
+    cycles_per_batch = 2 if mask == "bidirectional" else 1
+
+    
 
     # Main loop. Most of the complexity here is in the dynamic growing scheduler(s).
-    while curr_step < hyp['opt']['total_train_steps']:
+    while curr_step < num_steps_train:
         inputs, targets = get_batch(data, key='train', batchsize=curr_batchsize, length=curr_length)
 
-        outputs = net(inputs)
+        for cycle in range(cycles_per_batch):
+            if mask == "forward":
+                causal_mask = causal_mask_forward
+                position_bias_base = position_bias_base_forward
+            elif mask == "backward":
+                causal_mask = causal_mask_backward
+                position_bias_base = position_bias_base_backward
+            else :
+                causal_mask = causal_mask_forward if cycle == 0 else causal_mask_backward
+                position_bias_base = position_bias_base_forward if cycle == 0 else position_bias_base_backward
+                if cycle == 1:
+                    # We need to switch the inputs and targets for the backward pass
+                    inputs, targets = targets, inputs
+            outputs = net(inputs)
+            loss = loss_fn(outputs.flatten(0, 1), targets.flatten(0, 1))
 
-        loss = loss_fn(outputs.flatten(0, 1), targets.flatten(0, 1))
+            loss.div(discrete_sampled_microbatch_steps).backward()
+            tokens_seen += curr_batchsize * curr_length
 
-        loss.div(discrete_sampled_microbatch_steps).backward()
-        tokens_seen += curr_batchsize * curr_length
+        epoch = tokens_seen/len(data['train'])
+        epoch_by_distinct_tokens_seen = epoch / cycles_per_batch
 
         # Quick non-eval summary every N training steps, at the end of every microbatch group, if we are not doing a _full eval_ here.
         if curr_step % 10 == 0 and curr_microbatch_step % discrete_sampled_microbatch_steps == 0 and not curr_step % hyp['opt']['eval_every'] == 0:
@@ -506,6 +576,13 @@ def main():
             train_summary_vars = {'epoch': tokens_seen//len(data['train']), 'curr_step': curr_step, 'train_loss': train_loss, 'train_acc': train_acc, 'grad_norm': grad_norm}
 
             print_training_details(format_for_table(variables_to_log, locals=train_summary_vars))
+
+            epoch_list_train.append(epoch)
+            epoch_by_distinct_tokens_seen_list_train.append(epoch_by_distinct_tokens_seen)
+            tokens_seen_list_train.append(tokens_seen)
+            steps_list_train.append(curr_step)
+            train_losses.append(train_loss)
+            train_accs.append(train_acc)
 
 
         # Once we've accumulated steps over all of our microbatches, take a single full-batchsize step.
@@ -548,7 +625,8 @@ def main():
             curr_step += 1
 
             # Since we're not running over epochs anymore, we have to manually calculate roughly what epoch it is. This is different than the standard random derangement of sampled sequences and has different pros/cons, is my understanding. :thumbsup:
-            epoch = tokens_seen//len(data['train'])
+            epoch = tokens_seen/len(data['train'])
+            epoch_by_distinct_tokens_seen = epoch / cycles_per_batch
 
             if curr_step % hyp['opt']['eval_every'] == 0:
                 ender.record()
@@ -558,47 +636,155 @@ def main():
                 train_loss = loss.detach().cpu().item() # Update the loss for the training details printout
 
                 net.eval()
-                val_acc, val_loss, val_perplexity = eval(net)
-
-                if (curr_step//hyp['opt']['eval_every']) % hyp['opt']['save_every_n_evals'] == 0:
-                    torch.save(net, 'model.pt')
+                val_acc_fw, val_loss_fw, val_pplx_fw, val_acc_bw, val_loss_bw, val_pplx_bw = eval(net)
+                
+                val_losses_forward.append(val_loss_fw)
+                val_accs_forward.append(val_acc_fw)
+                val_pplxs_forward.append(val_pplx_fw)
+                val_losses_backward.append(val_loss_bw)
+                val_accs_backward.append(val_acc_bw)
+                val_pplxs_backward.append(val_pplx_bw)
+                steps_list_val.append(curr_step)
+                tokens_seen_list_val.append(tokens_seen)
+                epoch_list_val.append(epoch)
+                epoch_by_distinct_tokens_seen_list_val.append(epoch_by_distinct_tokens_seen)
+                cumulative_times_val.append(total_seconds)
 
                 # Print out our training details
                 ## We also check to see if we're on our final eval loop (assum that max_curr_step lines up with the eval_every value) so we can print the 'bottom' of the table for each round.
-                is_final_eval = (curr_step >= hyp['opt']['total_train_steps']) # If we're at the end of training, add a line after the end of the run
+                is_final_eval = (curr_step >= num_steps_val) # If we're at the end of training, add a line after the end of the run
                 print_training_details(format_for_table(variables_to_log, locals=locals()), is_final_entry=is_final_eval)
 
+                if curr_step >= num_steps_val or tokens_seen >= num_tokens_val or epoch >= num_epochs_val:
+                    break
                 torch.cuda.synchronize()
                 starter.record()
                 net.train()
+
+            if curr_step >= num_steps_train or tokens_seen >= num_tokens_train or epoch >= num_epochs_train:
+                break
         curr_microbatch_step += 1
 
-    return net, val_loss # Return the final validation loss achieved (not using the 'best validation loss' selection strategy, which I think is okay here....)
+    del net
+
+    return (
+        val_loss_fw, total_trainable_params, train_losses, val_losses_forward,
+        val_losses_backward, val_accs_backward, val_pplxs_backward,
+        train_accs, val_accs_forward, val_pplxs_forward,
+        tokens_seen_list_train, epoch_list_train, steps_list_train,
+        epoch_by_distinct_tokens_seen_list_train,
+        tokens_seen_list_val, epoch_list_val, steps_list_val,
+        cumulative_times_val, epoch_by_distinct_tokens_seen_list_val,
+    )
 
 
-if __name__ == "__main__":
-    final_val_loss_list = []
-    for _ in range(1):
-        net, val_loss = main()
-        final_val_loss_list.append(val_loss)
-    print(f"Average final val loss: {sum(final_val_loss_list)/len(final_val_loss_list)}") # TODO add variance as well, later
+def get_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Train a GPT-like model on the wikitext-103 dataset.")
+
+    parser.add_argument("-s", "--save", action="store_true")
+    parser.add_argument("--savefile", type=str, default="results.csv")
+    parser.add_argument("--append", action="store_true")
+
+    parser.add_argument("--gpu_capacity_scalar", type=float, default=1.0, help="The max token capacity is multiplied by this.")
+
+    parser.add_argument("--num_runs", type=int, default=1)
+    parser.add_argument("--seed", type=int, default=100)
+    parser.add_argument("--model_scale", type=float, default=1.0, nargs="+", help="The scale of the model to train.")
+    parser.add_argument("--mask", type=str, choices=["forward", "backward", "bidirectional"], nargs="+", default="forward", help="The type of mask to use for the attention mechanism.")
+
+    parser.add_argument("--num_tokens_train", type=int, default=int(1e12))
+    parser.add_argument("--num_tokens_val", type=int, default=int(1e12))
+    parser.add_argument("--num_epochs_train", type=int, default=10)
+    parser.add_argument("--num_epochs_val", type=int, default=10)
+    parser.add_argument("--num_steps_train", type=int, default=1000)
+    parser.add_argument("--num_steps_val", type=int, default=1000)
 
 
-########################
-#    Inference Test    #
-########################
-net = torch.load('model.pt')
+    args = parser.parse_args()
+    args.mask = args.mask if isinstance(args.mask, list) else [args.mask]
+    args.model_scale = args.model_scale if isinstance(args.model_scale, list) else [args.model_scale]
 
-net.eval()
-demo_sentence = "In 1856, Abraham Lincoln"
+    return args
 
-tokenizer = tiktoken.get_encoding("gpt2")
-tokenized_demo_sentence = torch.tensor(tokenizer.encode_ordinary(demo_sentence), dtype=torch.int, device='cuda').unsqueeze(0)
 
-import sys; sys.setrecursionlimit(max_sequence_length*2)
-inference = lambda x, length=512, temp=1.: inference(torch.cat((x, torch.multinomial(net(x)[:, -1].div(temp).softmax(-1), 1)), dim=-1), length-1) if length > 0 else x
+def get_settings(args: argparse.Namespace) -> list:
+    return list(itertools.product(args.model_scale, args.mask))
 
-import textwrap
-with torch.no_grad():
-    print("\nprompt: \n", textwrap.fill(tokenizer.decode(tokenized_demo_sentence.squeeze().cpu().numpy()), 80,  replace_whitespace=False))
-    print("decoded result: \n", textwrap.fill(tokenizer.decode(inference(tokenized_demo_sentence).squeeze().cpu().numpy()), 80,  replace_whitespace=False))
+
+def main() -> None:
+    args = get_args()
+    settings = get_settings(args)
+    global_run_num = 0
+    total_num_runs = int(len(settings) * args.num_runs)
+    global hyp
+    change_gpu_token_capacity(args.gpu_capacity_scalar)
+
+    for setting_num, (model_scale, mask) in enumerate(settings):
+        change_model_scale(model_scale)
+        seed = args.seed
+        for run in range(args.num_runs):
+            global_run_num += 1
+            title = (
+                f"::: STARTING RUN {global_run_num}/{total_num_runs} "
+                f"(Setting {setting_num+1}/{len(settings)}, Run {run+1}/{args.num_runs}) :::\n"
+                f":::  {mask=} :::\n:::  {model_scale=} :::\n"
+            )
+            sep = ":" * max(len(line) for line in title.split("\n"))
+            title = "\n".join([sep, title, sep]) + "\n\n"
+            print(title)
+
+            torch.manual_seed(seed)
+            (
+                val_loss, num_params, train_losses, val_losses_forward,
+                val_losses_backward, val_accs_backward, val_pplxs_backward,
+                train_accs, val_accs_forward, val_pplxs_forward,
+                tokens_seen_train, epochs_train, steps_train,
+                epoch_by_distinct_tokens_seen_train,
+                tokens_seen_val, epochs_val, steps_val,
+                cumulative_times_val, epoch_by_distinct_tokens_seen_val,
+            ) = train(
+                mask=mask,
+                num_tokens_train=args.num_tokens_train,
+                num_tokens_val=args.num_tokens_val,
+                num_epochs_train=args.num_epochs_train,
+                num_epochs_val=args.num_epochs_val,
+                num_steps_train=args.num_steps_train,
+                num_steps_val=args.num_steps_val,
+            )
+
+            results = {
+                "final_val_loss": [val_loss],
+                "mask": [mask],
+                "model_scale": [model_scale],
+                "depth": [hyp['net']['num_blocks']],
+                "width": [hyp['net']['residual_depth']],
+                "num_params": [num_params],
+                "train_losses": [str(train_losses)],
+                "train_accs": [str(train_accs)],
+                "val_losses": [str(val_losses_forward)],
+                "val_accs": [str(val_accs_forward)],
+                "val_pplxs": [str(val_pplxs_forward)],
+                "val_losses_backward": [str(val_losses_backward)],
+                "val_accs_backward": [str(val_accs_backward)],
+                "val_pplxs_backward": [str(val_pplxs_backward)],
+                "tokens_seen_train": [str(tokens_seen_train)],
+                "epochs_train": [str(epochs_train)],
+                "steps_train": [str(steps_train)],
+                "epoch_by_distinct_tokens_seen_train": [str(epoch_by_distinct_tokens_seen_train)],
+                "tokens_seen_val": [str(tokens_seen_val)],
+                "epochs_val": [str(epochs_val)],
+                "steps_val": [str(steps_val)],
+                "cumulative_times_val": [str(cumulative_times_val)],
+                "epoch_by_distinct_tokens_seen_val": [str(epoch_by_distinct_tokens_seen_val)],
+            }
+
+            df = pl.DataFrame(results)
+
+            if args.save:
+                if os.path.exists(args.savefile) and (args.append or setting_num == run == 0):
+                    with open(args.savefile, "rb") as f:
+                        df.write_csv(f, include_header=False)
+                else:
+                    df.write_csv(args.savefile)
+
+            seed += 1
