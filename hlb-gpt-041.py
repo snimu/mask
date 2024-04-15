@@ -371,7 +371,7 @@ def grow_sequence_length(old_length, old_batchsize):
 #          Logging           #
 ##############################
 
-variables_to_log = ['epoch', 'curr_step', 'train_loss', 'val_loss_fw', 'val_loss_bw', 'val_pplx_fw', 'val_pplx_bw', 'train_acc', 'val_acc_fw', 'cum_secs']
+variables_to_log = ['epoch', 'curr_step', 'train_loss', 'val_loss_fw', 'val_loss_bw', 'pplx_fw', 'pplx_bw', 'train_acc', 'val_acc_fw', 'cum_secs']
 # define the printing function and print the column heads
 def print_training_details(columns_list, separator_left='  ', separator_right='  |', column_labels_only=False, is_final_entry=False):
     output_line = "|" # start with the left bar
@@ -470,7 +470,7 @@ def train(
     assert final_batchsize > 1, f"Error: Specified configuration takes up too much memory (calculated final batchsize {final_batchsize} is less than 1!)"
 
     # Validation parameters
-    val_loss_fw, val_acc_fw, val_pplx_fw, val_loss_bw, val_acc_bw, val_pplx_bw = None, None, None, None, None, None
+    val_loss_fw, val_acc_fw, pplx_fw, val_loss_bw, val_acc_bw, pplx_bw = None, None, None, None, None, None
 
     train_losses, train_accs = [], []
     val_losses_forward, val_accs_forward, val_pplxs_forward = [], [], []
@@ -636,14 +636,14 @@ def train(
                 train_loss = loss.detach().cpu().item() # Update the loss for the training details printout
 
                 net.eval()
-                val_acc_fw, val_loss_fw, val_pplx_fw, val_acc_bw, val_loss_bw, val_pplx_bw = eval(net)
+                val_acc_fw, val_loss_fw, pplx_fw, val_acc_bw, val_loss_bw, pplx_bw = eval(net)
                 
                 val_losses_forward.append(val_loss_fw)
                 val_accs_forward.append(val_acc_fw)
-                val_pplxs_forward.append(val_pplx_fw)
+                val_pplxs_forward.append(pplx_fw)
                 val_losses_backward.append(val_loss_bw)
                 val_accs_backward.append(val_acc_bw)
-                val_pplxs_backward.append(val_pplx_bw)
+                val_pplxs_backward.append(pplx_bw)
                 steps_list_val.append(curr_step)
                 tokens_seen_list_val.append(tokens_seen)
                 epoch_list_val.append(epoch)
