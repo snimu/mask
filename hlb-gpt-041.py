@@ -564,7 +564,8 @@ def train(
                 causal_mask = causal_mask_backward
                 position_bias_base = position_bias_base_backward
                 causality = "backward"
-            else :
+                inputs, targets = targets, inputs
+            else:
                 causal_mask = causal_mask_forward if cycle == 0 else causal_mask_backward
                 position_bias_base = position_bias_base_forward if cycle == 0 else position_bias_base_backward
                 causality = "forward" if cycle == 0 else "backward"
