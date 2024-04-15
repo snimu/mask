@@ -371,7 +371,7 @@ def grow_sequence_length(old_length, old_batchsize):
 #          Logging           #
 ##############################
 
-variables_to_log = ['epoch', 'curr_step', 'train_loss', 'val_loss_fw', 'val_loss_bw', 'val_pplx_fw', 'val_pplx_bw', 'train_acc', 'val_acc_fw', 'val_pplx_bw', 'total_seconds']
+variables_to_log = ['epoch', 'curr_step', 'train_loss', 'val_loss_fw', 'val_loss_bw', 'val_pplx_fw', 'val_pplx_bw', 'train_acc', 'val_acc_fw', 'total_secs']
 # define the printing function and print the column heads
 def print_training_details(columns_list, separator_left='  ', separator_right='  |', column_labels_only=False, is_final_entry=False):
     output_line = "|" # start with the left bar
@@ -454,7 +454,7 @@ def train(
     #     Init      #
     #################
     # Full-run statistics variables
-    total_seconds        = 0.
+    total_secs        = 0.
     curr_microbatch_step = curr_step = 0
     tokens_seen          = 0
 
@@ -632,7 +632,7 @@ def train(
                 ender.record()
                 torch.cuda.synchronize()
 
-                total_seconds += 1e-3 * starter.elapsed_time(ender)
+                total_secs += 1e-3 * starter.elapsed_time(ender)
                 train_loss = loss.detach().cpu().item() # Update the loss for the training details printout
 
                 net.eval()
@@ -648,7 +648,7 @@ def train(
                 tokens_seen_list_val.append(tokens_seen)
                 epoch_list_val.append(epoch)
                 epoch_by_distinct_tokens_seen_list_val.append(epoch_by_distinct_tokens_seen)
-                cumulative_times_val.append(total_seconds)
+                cumulative_times_val.append(total_secs)
 
                 # Print out our training details
                 ## We also check to see if we're on our final eval loop (assum that max_curr_step lines up with the eval_every value) so we can print the 'bottom' of the table for each round.
