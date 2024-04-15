@@ -788,3 +788,6 @@ def main() -> None:
                     df.write_csv(args.savefile)
 
             seed += 1
+
+if __name__ == "__main__":
+    main()
