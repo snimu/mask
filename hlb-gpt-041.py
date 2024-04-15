@@ -186,6 +186,7 @@ with torch.no_grad():
     causal_mask_forward = torch.tril(torch.ones((hyp['misc']['sequence_length']['max'], hyp['misc']['sequence_length']['max']), device=hyp['misc']['device'], dtype=torch.bool))
     causal_mask_backward = torch.tril(torch.ones((hyp['misc']['sequence_length']['max'], hyp['misc']['sequence_length']['max']), device=hyp['misc']['device'], dtype=torch.bool)).flip(0)
     causal_mask = causal_mask_forward
+    causality: Literal["forward", "backward"] = "forward"
 
 
 # Used in the dataloader to select indexes in a sequence. Preallocated for slight efficiency.
@@ -215,8 +216,9 @@ class LatentAttentionBlock(nn.Module):
         # Has a high lr mult applied to it so that each layer can learn its own attention scale.
         self.position_bias_mult = nn.Parameter(torch.tensor(1., device='cuda'))
 
-    def forward(self, x, causality: Literal["forward", "backward"] = "forward"):
+    def forward(self, x):
         residual = x
+        global causality
         # Make additive attention mask, scaled by a learned mult for the position bias (lets us learn dynamic attention ranges per layer as needed)
         if causality == "forward":
             attn_mask = torch.where(causal_mask[:x.shape[1], :x.shape[1]], F.softplus(self.position_bias_mult) * position_bias_base[:x.shape[1], :x.shape[1]], negative_infinity_matrix_base[:x.shape[1], :x.shape[1]])
@@ -416,13 +418,16 @@ def eval(net):
     # float32 here to prevent truncation errors
     val_loss_forward, val_acc_forward = torch.tensor(0., device=hyp['misc']['device'], dtype=torch.float), torch.tensor(0., device=hyp['misc']['device'], dtype=torch.float)
     val_loss_backward, val_acc_backward = torch.tensor(0., device=hyp['misc']['device'], dtype=torch.float), torch.tensor(0., device=hyp['misc']['device'], dtype=torch.float)
-    global causal_mask, causal_mask_forward, causal_mask_backward, position_bias_base, position_bias_base_forward, position_bias_base_backward
+    global causal_mask, causal_mask_forward, causal_mask_backward
+    global position_bias_base, position_bias_base_forward, position_bias_base_backward
+    global causality
 
     with torch.no_grad():
         # Note: We eval at the maximum sequence length so that we can get an idea of how well the sequence length growing extrapolates out
         for _ in range(num_eval_steps):
             causal_mask = causal_mask_forward
             position_bias_base = position_bias_base_forward
+            causality = "forward"
             inputs, targets = get_batch(data, key='eval', batchsize=eval_batchsize, length=hyp['misc']['sequence_length']['max'])
             outputs = net(inputs)
             val_loss_forward += 1./num_eval_steps * loss_fn(outputs.flatten(0, 1).float(), targets.flatten(0, 1))
@@ -430,6 +435,7 @@ def eval(net):
 
             causal_mask = causal_mask_backward
             position_bias_base = position_bias_base_backward
+            causality = "backward"
             inputs, targets = targets, inputs
             outputs = net(inputs)
             val_loss_backward += 1./num_eval_steps * loss_fn(outputs.flatten(0, 1).float(), targets.flatten(0, 1))
@@ -538,7 +544,9 @@ def train(
     starter.record()
 
     net.train()
-    global causal_mask_forward, causal_mask_backward, causal_mask, position_bias_base_forward, position_bias_base_backward, position_bias_base
+    global causal_mask_forward, causal_mask_backward, causal_mask
+    global position_bias_base_forward, position_bias_base_backward, position_bias_base
+    global causality
     cycles_per_batch = 2 if mask == "bidirectional" else 1
 
     
@@ -551,12 +559,15 @@ def train(
             if mask == "forward":
                 causal_mask = causal_mask_forward
                 position_bias_base = position_bias_base_forward
+                causality = "forward"
             elif mask == "backward":
                 causal_mask = causal_mask_backward
                 position_bias_base = position_bias_base_backward
+                causality = "backward"
             else :
                 causal_mask = causal_mask_forward if cycle == 0 else causal_mask_backward
                 position_bias_base = position_bias_base_forward if cycle == 0 else position_bias_base_backward
+                causality = "forward" if cycle == 0 else "backward"
                 if cycle == 1:
                     # We need to switch the inputs and targets for the backward pass
                     inputs, targets = targets, inputs
