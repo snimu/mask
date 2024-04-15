@@ -223,8 +223,8 @@ class LatentAttentionBlock(nn.Module):
         if causality == "forward":
             attn_mask = torch.where(causal_mask[:x.shape[1], :x.shape[1]], F.softplus(self.position_bias_mult) * position_bias_base[:x.shape[1], :x.shape[1]], negative_infinity_matrix_base[:x.shape[1], :x.shape[1]])
         else:
-            attn_mask = torch.where(causal_mask[-x.shape[1]:, -x.shape[1]:], F.softplus(self.position_bias_mult) * position_bias_base[-x.shape[1]:, -x.shape[1]:], negative_infinity_matrix_base[-x.shape[1]:, -x.shape[1]:])
-
+            attn_mask = torch.where(causal_mask[-x.shape[1]:, :x.shape[1]], F.softplus(self.position_bias_mult) * position_bias_base[-x.shape[1]:, :x.shape[1]], negative_infinity_matrix_base[-x.shape[1]:, :x.shape[1]])
+        
         # Shared LayerNorm for linear layers and attention
         x = self.norm(x)
 
