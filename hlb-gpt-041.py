@@ -732,7 +732,7 @@ def main() -> None:
             max_len = max(len(line) for line in title.split("\n"))
             title = "\n".join([line + " " * (max_len - len(line)) + " :::" for line in title.split("\n")])
             sep = ":" * max(len(line) for line in title.split("\n"))
-            title = "\n".join([sep, title, sep]) + "\n\n"
+            title = "\n\n" + "\n".join([sep, title, sep]) + "\n\n"
             print(title)
 
             torch.manual_seed(seed)
