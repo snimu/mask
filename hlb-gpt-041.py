@@ -726,9 +726,11 @@ def main() -> None:
             global_run_num += 1
             title = (
                 f"::: STARTING RUN {global_run_num}/{total_num_runs} "
-                f"(Setting {setting_num+1}/{len(settings)}, Run {run+1}/{args.num_runs}) :::\n"
-                f":::  {mask=} :::\n:::  {model_scale=} :::\n"
+                f"(Setting {setting_num+1}/{len(settings)}, Run {run+1}/{args.num_runs})\n"
+                f":::  {mask=} :::\n:::  {model_scale=}\n"
             )
+            max_len = max(len(line) for line in title.split("\n"))
+            title = "\n".join([line + " " * (max_len - len(line)) + " :::" for line in title.split("\n")])
             sep = ":" * max(len(line) for line in title.split("\n"))
             title = "\n".join([sep, title, sep]) + "\n\n"
             print(title)
