@@ -641,7 +641,7 @@ def train(
             epoch = tokens_seen/len(data['train'])
             epoch_by_distinct_tokens_seen = epoch / cycles_per_batch
 
-            if (curr_step % hyp['opt']['eval_every'] == 0) or (epoch - epoch_list_val[-1] >= max_epochs_between_vals):
+            if (curr_step % hyp['opt']['eval_every'] == 0) or (epoch_list_val and (epoch - epoch_list_val[-1] >= max_epochs_between_vals)):
                 ender.record()
                 torch.cuda.synchronize()
 
