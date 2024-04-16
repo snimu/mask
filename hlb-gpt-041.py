@@ -393,7 +393,7 @@ def print_training_details(columns_list, separator_left='  ', separator_right=' 
 # The previous function was a shorter but slightly more heinous lambda, however, this may still cause you some pain. <3 :'(
 def format_for_table(var_list, locals):
     int_format     = lambda x: f"{locals[x]}".rjust(len(x))
-    default_format = lambda x: "{:0.4f}".format(locals[x]).rjust(len(x))
+    default_format = lambda x: "{:0.4f}".format(locals[x]).rjust(len(x)) if len(f"{locals[x]:0.4f}") < 8 else "{:0.4f}".format(locals[x])[:8].rjust(len(x))
     blank_format   = lambda x: " "*len(x)
 
     out_list = [blank_format(v) if v not in locals else (int_format(v) if type(locals[v]) == int else default_format(v)) for v in var_list]
@@ -796,7 +796,7 @@ def main() -> None:
 
             if args.save:
                 if os.path.exists(args.savefile) and (args.append or setting_num == run == 0):
-                    with open(args.savefile, "rb") as f:
+                    with open(args.savefile, "ab") as f:
                         df.write_csv(f, include_header=False)
                 else:
                     df.write_csv(args.savefile)
