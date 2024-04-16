@@ -583,7 +583,7 @@ def train(
         epoch_by_distinct_tokens_seen = epoch / cycles_per_batch
 
         # Quick non-eval summary every N training steps, at the end of every microbatch group, if we are not doing a _full eval_ here.
-        if curr_step % 10 == 0 and curr_microbatch_step % discrete_sampled_microbatch_steps == 0 and not ((curr_step % hyp['opt']['eval_every'] == 0) or (epoch - epoch_list_val[-1] >= max_epochs_between_vals)):
+        if curr_step % 10 == 0 and curr_microbatch_step % discrete_sampled_microbatch_steps == 0 and not ((curr_step % hyp['opt']['eval_every'] == 0) or (epoch_list_val and (epoch - epoch_list_val[-1] >= max_epochs_between_vals))):
             train_acc          = (outputs.detach().argmax(-1) == targets).float().mean().item()
             train_loss         = loss.detach().cpu().item()
             train_summary_vars = {'epoch': epoch, 'curr_step': curr_step, 'train_loss': train_loss, 'train_acc': train_acc}
