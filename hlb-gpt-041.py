@@ -454,6 +454,7 @@ def train(
         num_tokens_train: int, num_tokens_val: int, 
         num_epochs_train: int, num_epochs_val: int, 
         num_steps_train: int, num_steps_val: int,
+        max_epochs_between_vals: float,
 ):
 
     #################
@@ -582,7 +583,7 @@ def train(
         epoch_by_distinct_tokens_seen = epoch / cycles_per_batch
 
         # Quick non-eval summary every N training steps, at the end of every microbatch group, if we are not doing a _full eval_ here.
-        if curr_step % 10 == 0 and curr_microbatch_step % discrete_sampled_microbatch_steps == 0 and not curr_step % hyp['opt']['eval_every'] == 0:
+        if curr_step % 10 == 0 and curr_microbatch_step % discrete_sampled_microbatch_steps == 0 and not ((curr_step % hyp['opt']['eval_every'] == 0) or (epoch - epoch_list_val[-1] >= max_epochs_between_vals)):
             train_acc          = (outputs.detach().argmax(-1) == targets).float().mean().item()
             train_loss         = loss.detach().cpu().item()
             train_summary_vars = {'epoch': epoch, 'curr_step': curr_step, 'train_loss': train_loss, 'train_acc': train_acc}
@@ -640,7 +641,7 @@ def train(
             epoch = tokens_seen/len(data['train'])
             epoch_by_distinct_tokens_seen = epoch / cycles_per_batch
 
-            if curr_step % hyp['opt']['eval_every'] == 0:
+            if (curr_step % hyp['opt']['eval_every'] == 0) or (epoch - epoch_list_val[-1] >= max_epochs_between_vals):
                 ender.record()
                 torch.cuda.synchronize()
 
@@ -710,6 +711,7 @@ def get_args() -> argparse.Namespace:
     parser.add_argument("--num_epochs_val", type=int, default=10)
     parser.add_argument("--num_steps_train", type=int, default=1000)
     parser.add_argument("--num_steps_val", type=int, default=1000)
+    parser.add_argument("--max_epochs_between_vals", type=float, default=0.25)
 
 
     args = parser.parse_args()
@@ -764,6 +766,7 @@ def main() -> None:
                 num_epochs_val=args.num_epochs_val,
                 num_steps_train=args.num_steps_train,
                 num_steps_val=args.num_steps_val,
+                max_epochs_between_vals=args.max_epochs_between_vals,
             )
 
             results = {
