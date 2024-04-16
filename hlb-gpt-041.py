@@ -795,11 +795,11 @@ def main() -> None:
             df = pl.DataFrame(results)
 
             if args.save:
-                if os.path.exists(args.savefile) and (args.append or setting_num == run == 0):
+                if not os.path.exists(args.savefile) or ((setting_num == run == 0) and not args.append):
+                    df.write_csv(args.savefile)
+                else:
                     with open(args.savefile, "ab") as f:
                         df.write_csv(f, include_header=False)
-                else:
-                    df.write_csv(args.savefile)
 
             seed += 1
 
