@@ -735,8 +735,8 @@ def get_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=100)
     parser.add_argument("--model_scale", type=float, default=1.0, nargs="+", help="The scale of the model to train.")
     parser.add_argument("--mask", type=str, choices=["forward", "backward", "bidirectional"], nargs="+", default="forward", help="The type of mask to use for the attention mechanism.")
-    parser.add_argument("--backward_prob", type=float, default=1.0, help="Only relevant if mask==bidirectional")
-    parser.add_argument("--adjust_backward_prob", action="store_true", help="If set, backward prob will be dynamically adjusted.")
+    parser.add_argument("--backward_prob", type=float, default=1.0, nargs="+", help="Only relevant if mask==bidirectional")
+    parser.add_argument("--adjust_backward_prob", type=int, nargs="+", default=0, help="If set, backward prob will be dynamically adjusted.")
 
     parser.add_argument("--num_tokens_train", type=int, default=int(1e12))
     parser.add_argument("--num_tokens_val", type=int, default=int(1e12))
@@ -750,14 +750,17 @@ def get_args() -> argparse.Namespace:
     args = parser.parse_args()
     args.mask = args.mask if isinstance(args.mask, list) else [args.mask]
     args.model_scale = args.model_scale if isinstance(args.model_scale, list) else [args.model_scale]
+    args.backward_prob = args.backward_prob if isinstance(args.backward_prob, int) else [args.backward_prob]
+    args.adjust_backward_prob = args.adjust_backward_prob if isinstance(args.adjust_backward_prob, int) else [args.adjust_backward_prob]
 
-    args.backward_prob = max(0.0, min(1.0, args.backward_prob))
+    args.backward_prob = list(set(max(0.0, min(1.0, p)) for p in args.backward_prob))
+    args.adjust_backward_prob = list(set([bool(x) for x in args.adjust_backward_prob]))
 
     return args
 
 
 def get_settings(args: argparse.Namespace) -> list:
-    return list(itertools.product(args.model_scale, args.mask))
+    return list(itertools.product(args.model_scale, args.mask, args.backward_prob, args.adjust_backward_prob))
 
 
 def main() -> None:
@@ -768,7 +771,7 @@ def main() -> None:
     global hyp
     change_gpu_token_capacity(args.gpu_capacity_scalar)
 
-    for setting_num, (model_scale, mask) in enumerate(settings):
+    for setting_num, (model_scale, mask, backward_prob, adjust_backward_prob) in enumerate(settings):
         change_model_scale(model_scale)
         seed = args.seed
         for run in range(args.num_runs):
@@ -802,8 +805,8 @@ def main() -> None:
                 num_steps_train=args.num_steps_train,
                 num_steps_val=args.num_steps_val,
                 max_epochs_between_vals=args.max_epochs_between_vals,
-                backward_prob=args.backward_prob,
-                adjust_backward_prob=args.adjust_backward_prob,
+                backward_prob=backward_prob,
+                adjust_backward_prob=adjust_backward_prob,
             )
 
             results = {
