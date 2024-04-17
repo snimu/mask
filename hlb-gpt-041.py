@@ -750,8 +750,8 @@ def get_args() -> argparse.Namespace:
     args = parser.parse_args()
     args.mask = args.mask if isinstance(args.mask, list) else [args.mask]
     args.model_scale = args.model_scale if isinstance(args.model_scale, list) else [args.model_scale]
-    args.backward_prob = args.backward_prob if isinstance(args.backward_prob, int) else [args.backward_prob]
-    args.adjust_backward_prob = args.adjust_backward_prob if isinstance(args.adjust_backward_prob, int) else [args.adjust_backward_prob]
+    args.backward_prob = args.backward_prob if isinstance(args.backward_prob, list) else [args.backward_prob]
+    args.adjust_backward_prob = args.adjust_backward_prob if isinstance(args.adjust_backward_prob, list) else [args.adjust_backward_prob]
 
     args.backward_prob = list(set(max(0.0, min(1.0, p)) for p in args.backward_prob))
     args.adjust_backward_prob = list(set([bool(x) for x in args.adjust_backward_prob]))
