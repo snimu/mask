@@ -474,7 +474,7 @@ def compute_loss(
         outputs = net(inputs)
         loss_fw = loss_fn(outputs.flatten(0, 1), targets.flatten(0, 1))
         tokens_seen += curr_batchsize * curr_length
-    if mask == "backward" or (mask == "bidirectional" and (torch.randint(0, 1000).item() / 1000 <= backward_prob)):
+    if mask == "backward" or (mask == "bidirectional" and (torch.randint(0, 1000, (1,)).item() / 1000 <= backward_prob)):
         causal_mask = causal_mask_backward
         position_bias_base = position_bias_base_backward
         causality = "backward"
