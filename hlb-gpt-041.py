@@ -761,12 +761,20 @@ def get_args() -> argparse.Namespace:
 
 def get_settings(args: argparse.Namespace) -> list:
     standard_settings = list(itertools.product(args.model_scale, args.mask))
+
     bw_settings = [(bp, False) for bp in args.backward_prob if False in args.adjust_backward_prob]
     if True in args.adjust_backward_prob:
         bw_settings.append((1.0, True))
-    settings = [(*setting, *bw_setting) for setting in standard_settings for bw_setting in bw_settings]
 
-    return settings
+    combined_settings = [
+        (ms, mask, bp, adjust_backward_prob)
+        for ms, mask in standard_settings
+        for bp, adjust_backward_prob in bw_settings
+        if mask == "bidirectional"
+    ]
+    combined_settings.extend([(ms, mask, 0.0, False) for ms, mask in standard_settings if mask != "bidirectional"])
+    
+    return combined_settings
 
 
 def main() -> None:
