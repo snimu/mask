@@ -449,12 +449,54 @@ def eval(net):
         val_acc_backward.item(), val_loss_backward.item(), val_perplexity_backward.item(),
     )
 
+
+def compute_loss(
+        net: SpeedyLangNet,
+        inputs: torch.Tensor,
+        targets: torch.Tensor,
+        tokens_seen: int,
+        mask: Literal["forward", "backward", "bidirectional"],
+        curr_batchsize: int,
+        curr_length: int,
+        discrete_sampled_microbatch_steps: int,
+        backward_prob: float = 1.0,
+) -> tuple[torch.Tensor, torch.Tensor, float, float, int]:
+    """Returns outputs, loss, loss_fw, loss_bw, tokens_seen. Does *not* call `backward` on loss."""
+    global causal_mask, causal_mask_backward, causal_mask_forward, causality
+    global position_bias_base, position_bias_base_forward, position_bias_base_backward
+
+    loss_fw, loss_bw = 0.0, 0.0
+
+    if mask in ("forward", "bidirectional"):
+        causal_mask = causal_mask_forward
+        position_bias_base = position_bias_base_forward
+        causality = "forward"
+        outputs = net(inputs)
+        loss_fw = loss_fn(outputs.flatten(0, 1), targets.flatten(0, 1))
+        tokens_seen += curr_batchsize * curr_length
+    if mask == "backward" or (mask == "bidirectional" and (torch.randint(0, 1000).item() / 1000 <= backward_prob)):
+        causal_mask = causal_mask_backward
+        position_bias_base = position_bias_base_backward
+        causality = "backward"
+        inputs, targets = targets, inputs
+        outputs = net(inputs)
+        loss_bw = loss_fn(outputs.flatten(0, 1), targets.flatten(0, 1))
+        tokens_seen += curr_batchsize * curr_length
+        
+    loss = loss_fw + loss_bw
+    loss = loss.div(discrete_sampled_microbatch_steps)
+    return outputs, loss, float(loss_fw), float(loss_bw), tokens_seen
+    
+
+
 def train(
         mask: str, 
         num_tokens_train: int, num_tokens_val: int, 
         num_epochs_train: int, num_epochs_val: int, 
         num_steps_train: int, num_steps_val: int,
         max_epochs_between_vals: float,
+        backward_prob: float,
+        adjust_backward_prob: bool,
 ):
 
     #################
@@ -464,6 +506,7 @@ def train(
     cum_secs             = 0.  # cumulative seconds
     curr_microbatch_step = curr_step = 0
     tokens_seen          = 0
+    distinct_tokens_seen = 0
 
     # Microbatch growing parameters
     # Leaving this hardcoded for now for simplicity, this helps keep the learning process stable.
@@ -548,39 +591,28 @@ def train(
     global causal_mask_forward, causal_mask_backward, causal_mask
     global position_bias_base_forward, position_bias_base_backward, position_bias_base
     global causality
-    cycles_per_batch = 2 if mask == "bidirectional" else 1
-
-    
 
     # Main loop. Most of the complexity here is in the dynamic growing scheduler(s).
     while curr_step < num_steps_train:
         inputs, targets = get_batch(data, key='train', batchsize=curr_batchsize, length=curr_length)
 
-        for cycle in range(cycles_per_batch):
-            if mask == "forward":
-                causal_mask = causal_mask_forward
-                position_bias_base = position_bias_base_forward
-                causality = "forward"
-            elif mask == "backward":
-                causal_mask = causal_mask_backward
-                position_bias_base = position_bias_base_backward
-                causality = "backward"
-                inputs, targets = targets, inputs
-            else:
-                causal_mask = causal_mask_forward if cycle == 0 else causal_mask_backward
-                position_bias_base = position_bias_base_forward if cycle == 0 else position_bias_base_backward
-                causality = "forward" if cycle == 0 else "backward"
-                if cycle == 1:
-                    # We need to switch the inputs and targets for the backward pass
-                    inputs, targets = targets, inputs
-            outputs = net(inputs)
-            loss = loss_fn(outputs.flatten(0, 1), targets.flatten(0, 1))
-
-            loss.div(discrete_sampled_microbatch_steps).backward()
-            tokens_seen += curr_batchsize * curr_length
+        outputs, loss, loss_fw, loss_bw, tokens_seen = compute_loss(
+            net=net,
+            inputs=inputs,
+            targets=targets,
+            tokens_seen=tokens_seen,
+            mask=mask,
+            curr_batchsize=curr_batchsize,
+            curr_length=curr_length,
+            discrete_sampled_microbatch_steps=discrete_sampled_microbatch_steps,
+            backward_prob=backward_prob,
+        )
+        loss.backward()
+        if adjust_backward_prob:
+            backward_prob = min(1.0, loss_bw / loss_fw)  # if backward is easier, do it less frequently
 
         epoch = tokens_seen/len(data['train'])
-        epoch_by_distinct_tokens_seen = epoch / cycles_per_batch
+        distinct_tokens_seen += len(inputs)
 
         # Quick non-eval summary every N training steps, at the end of every microbatch group, if we are not doing a _full eval_ here.
         if curr_step % 10 == 0 and curr_microbatch_step % discrete_sampled_microbatch_steps == 0 and not ((curr_step % hyp['opt']['eval_every'] == 0) or (epoch_list_val and (epoch - epoch_list_val[-1] >= max_epochs_between_vals))):
@@ -591,7 +623,7 @@ def train(
             print_training_details(format_for_table(variables_to_log, locals=train_summary_vars))
 
             epoch_list_train.append(epoch)
-            epoch_by_distinct_tokens_seen_list_train.append(epoch_by_distinct_tokens_seen)
+            epoch_by_distinct_tokens_seen_list_train.append(distinct_tokens_seen/len(data['train']))
             tokens_seen_list_train.append(tokens_seen)
             steps_list_train.append(curr_step)
             train_losses.append(train_loss)
@@ -639,7 +671,6 @@ def train(
 
             # Since we're not running over epochs anymore, we have to manually calculate roughly what epoch it is. This is different than the standard random derangement of sampled sequences and has different pros/cons, is my understanding. :thumbsup:
             epoch = tokens_seen/len(data['train'])
-            epoch_by_distinct_tokens_seen = epoch / cycles_per_batch
 
             if (curr_step % hyp['opt']['eval_every'] == 0) or (epoch_list_val and (epoch - epoch_list_val[-1] >= max_epochs_between_vals)):
                 ender.record()
@@ -660,7 +691,7 @@ def train(
                 steps_list_val.append(curr_step)
                 tokens_seen_list_val.append(tokens_seen)
                 epoch_list_val.append(epoch)
-                epoch_by_distinct_tokens_seen_list_val.append(epoch_by_distinct_tokens_seen)
+                epoch_by_distinct_tokens_seen_list_val.append(distinct_tokens_seen/len(data['train']))
                 cumulative_times_val.append(cum_secs)
 
                 # Print out our training details
@@ -704,6 +735,8 @@ def get_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=100)
     parser.add_argument("--model_scale", type=float, default=1.0, nargs="+", help="The scale of the model to train.")
     parser.add_argument("--mask", type=str, choices=["forward", "backward", "bidirectional"], nargs="+", default="forward", help="The type of mask to use for the attention mechanism.")
+    parser.add_argument("--backward_prob", type=float, default=1.0, help="Only relevant if mask==bidirectional")
+    parser.add_argument("--adjust_backward_prob", action="store_true", help="If set, backward prob will be dynamically adjusted.")
 
     parser.add_argument("--num_tokens_train", type=int, default=int(1e12))
     parser.add_argument("--num_tokens_val", type=int, default=int(1e12))
@@ -717,6 +750,8 @@ def get_args() -> argparse.Namespace:
     args = parser.parse_args()
     args.mask = args.mask if isinstance(args.mask, list) else [args.mask]
     args.model_scale = args.model_scale if isinstance(args.model_scale, list) else [args.model_scale]
+
+    args.backward_prob = max(0.0, min(1.0, args.backward_prob))
 
     return args
 
@@ -767,6 +802,8 @@ def main() -> None:
                 num_steps_train=args.num_steps_train,
                 num_steps_val=args.num_steps_val,
                 max_epochs_between_vals=args.max_epochs_between_vals,
+                backward_prob=args.backward_prob,
+                adjust_backward_prob=args.adjust_backward_prob,
             )
 
             results = {
@@ -778,12 +815,12 @@ def main() -> None:
                 "num_params": [num_params],
                 "train_losses": [str(train_losses)],
                 "train_accs": [str(train_accs)],
-                "val_losses": [str(val_losses_forward)],
-                "val_accs": [str(val_accs_forward)],
-                "val_pplxs": [str(val_pplxs_forward)],
-                "val_losses_backward": [str(val_losses_backward)],
-                "val_accs_backward": [str(val_accs_backward)],
-                "val_pplxs_backward": [str(val_pplxs_backward)],
+                "val_losses_fw": [str(val_losses_forward)],
+                "val_accs_fw": [str(val_accs_forward)],
+                "val_pplxs_fw": [str(val_pplxs_forward)],
+                "val_losses_bw": [str(val_losses_backward)],
+                "val_accs_bw": [str(val_accs_backward)],
+                "val_pplxs_bw": [str(val_pplxs_backward)],
                 "tokens_seen_train": [str(tokens_seen_train)],
                 "epochs_train": [str(epochs_train)],
                 "steps_train": [str(steps_train)],
