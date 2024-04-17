@@ -760,7 +760,13 @@ def get_args() -> argparse.Namespace:
 
 
 def get_settings(args: argparse.Namespace) -> list:
-    return list(itertools.product(args.model_scale, args.mask, args.backward_prob, args.adjust_backward_prob))
+    settings = list(itertools.product(args.model_scale, args.mask))
+    if False in args.adjust_backward_prob:
+        settings = [setting + (bp, False) for bp in args.backward_prob for setting in settings]
+    if True in args.adjust_backward_prob:
+        settings = [setting + (1.0, True) for setting in settings]
+
+    return settings
 
 
 def main() -> None:
