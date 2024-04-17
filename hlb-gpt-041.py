@@ -608,8 +608,8 @@ def train(
             backward_prob=backward_prob,
         )
         loss.backward()
-        if adjust_backward_prob:
-            backward_prob = min(1.0, loss_bw / loss_fw)  # if backward is easier, do it less frequently
+        if adjust_backward_prob and loss_bw != 0.0:  # only adjust if we've just done a backward pass
+            backward_prob = max(min(1.0, loss_bw / loss_fw), 0.01)  # if backward is easier, do it less frequently (but not never)
 
         epoch = tokens_seen/len(data['train'])
         distinct_tokens_seen += len(inputs)
