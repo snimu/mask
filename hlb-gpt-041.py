@@ -529,6 +529,7 @@ def train(
     epoch_by_distinct_tokens_seen_list_train = []
     tokens_seen_list_val, epoch_list_val, steps_list_val = [], [], []
     cumulative_times_val, epoch_by_distinct_tokens_seen_list_val = [], []
+    backward_probs = []
 
     # Get network
     net = make_net()
@@ -608,6 +609,7 @@ def train(
             backward_prob=backward_prob,
         )
         loss.backward()
+        backward_probs.append(backward_prob)
         if adjust_backward_prob and loss_bw != 0.0:  # only adjust if we've just done a backward pass
             pplx_fw, pplx_bw = 2.71828 ** loss_fw, 2.71828 ** loss_bw
             backward_prob = max(min(1.0, pplx_bw / pplx_fw), 0.01)  # if backward is easier, do it less frequently (but not never)
@@ -720,6 +722,7 @@ def train(
         epoch_by_distinct_tokens_seen_list_train,
         tokens_seen_list_val, epoch_list_val, steps_list_val,
         cumulative_times_val, epoch_by_distinct_tokens_seen_list_val,
+        backward_probs,
     )
 
 
@@ -812,6 +815,7 @@ def main() -> None:
                 epoch_by_distinct_tokens_seen_train,
                 tokens_seen_val, epochs_val, steps_val,
                 cumulative_times_val, epoch_by_distinct_tokens_seen_val,
+                backward_probs,
             ) = train(
                 mask=mask,
                 num_tokens_train=args.num_tokens_train,
@@ -832,10 +836,11 @@ def main() -> None:
                 "depth": [hyp['net']['num_blocks']],
                 "width": [hyp['net']['residual_depth']],
                 "num_params": [num_params],
-                "backward_prob": [backward_prob],
-                "adjust_backward_prob": [adjust_backward_prob],
                 "run_num": [run],
                 "seed": [seed],
+                "adjust_backward_prob": [adjust_backward_prob],
+                "initial_backward_prob": [backward_prob],
+                "backward_probs": [str(backward_probs)],
                 "train_losses": [str(train_losses)],
                 "train_accs": [str(train_accs)],
                 "val_losses_fw": [str(val_losses_forward)],
