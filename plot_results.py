@@ -210,6 +210,7 @@ def plot_fw_bw(
         width: int = 384,
         show: bool = True,
         loglog: bool = False,
+        plot_all: bool = False,
 ) -> None:
     settings = get_unique_settings(file, ["initial_backward_prob"])
     colors = generate_distinct_colors(len(settings)*2)
@@ -228,17 +229,18 @@ def plot_fw_bw(
                     to_plot=to_plot+f"_{direction}",
                     plot_over=plot_over,
                 )
-
-                for y in ys:
-                    if loglog:
-                        plt.loglog(xs, y, color=color, alpha=0.2)
-                    else:
-                        plt.plot(xs, y, color=color, alpha=0.2)
+                if plot_all:
+                    for y in ys:
+                        if loglog:
+                            plt.loglog(xs, y, color=color, alpha=0.2)
+                        else:
+                            plt.plot(xs, y, color=color, alpha=0.2)
                 
                 label = f"{to_plot}_{direction}_{initial_backward_prob=}"
                 if loglog:
                     plt.loglog(xs, avg_ys, color=color, label=label)
-                plt.plot(xs, avg_ys, color=color, label=label)
+                else:
+                    plt.plot(xs, avg_ys, color=color, label=label)
 
     plt.xlabel(plot_over)
     plt.ylabel(to_plot)
@@ -256,5 +258,5 @@ if __name__ == "__main__":
         plot_over="epoch",
         mask="bidirectional",
         show=True,
-        loglog=False,
+        loglog=True,
     )
