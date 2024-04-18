@@ -618,12 +618,9 @@ def train(
         distinct_tokens_seen += len(inputs)
 
         # Quick non-eval summary every N training steps, at the end of every microbatch group, if we are not doing a _full eval_ here.
-        if curr_step % 10 == 0 and curr_microbatch_step % discrete_sampled_microbatch_steps == 0 and not ((curr_step % hyp['opt']['eval_every'] == 0) or (epoch_list_val and (epoch - epoch_list_val[-1] >= max_epochs_between_vals))):
+        if curr_step % 10 == 0 and curr_microbatch_step % discrete_sampled_microbatch_steps == 0:
             train_acc          = (outputs.detach().argmax(-1) == targets).float().mean().item()
             train_loss         = loss.detach().cpu().item()
-            train_summary_vars = {'epoch': epoch, 'curr_step': curr_step, 'train_loss': train_loss, 'train_acc': train_acc}
-
-            print_training_details(format_for_table(variables_to_log, locals=train_summary_vars))
 
             epoch_list_train.append(epoch)
             epoch_by_distinct_tokens_seen_list_train.append(distinct_tokens_seen/len(data['train']))
@@ -631,6 +628,11 @@ def train(
             steps_list_train.append(curr_step)
             train_losses.append(train_loss)
             train_accs.append(train_acc)
+
+            # don't print training details if we're about to do a full eval
+            if not ((curr_step % hyp['opt']['eval_every'] == 0) or (epoch_list_val and (epoch - epoch_list_val[-1] >= max_epochs_between_vals))):
+                train_summary_vars = {'epoch': epoch, 'curr_step': curr_step, 'train_loss': train_loss, 'train_acc': train_acc}
+                print_training_details(format_for_table(variables_to_log, locals=train_summary_vars))
 
 
         # Once we've accumulated steps over all of our microbatches, take a single full-batchsize step.
