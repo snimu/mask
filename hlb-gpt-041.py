@@ -715,7 +715,7 @@ def train(
     del net
 
     return (
-        val_loss_fw, total_trainable_params, train_losses, val_losses_forward,
+        val_loss_fw, val_loss_bw, total_trainable_params, train_losses, val_losses_forward,
         val_losses_backward, val_accs_backward, val_pplxs_backward,
         train_accs, val_accs_forward, val_pplxs_forward,
         tokens_seen_list_train, epoch_list_train, steps_list_train,
@@ -808,7 +808,7 @@ def main() -> None:
 
             torch.manual_seed(seed)
             (
-                val_loss, num_params, train_losses, val_losses_forward,
+                val_loss_fw, val_loss_bw, num_params, train_losses, val_losses_forward,
                 val_losses_backward, val_accs_backward, val_pplxs_backward,
                 train_accs, val_accs_forward, val_pplxs_forward,
                 tokens_seen_train, epochs_train, steps_train,
@@ -830,7 +830,8 @@ def main() -> None:
             )
 
             results = {
-                "final_val_loss": [val_loss],
+                "final_val_loss_fw": [val_loss_fw],
+                "final_val_loss_bw": [val_loss_bw],
                 "mask": [mask],
                 "model_scale": [model_scale],
                 "depth": [hyp['net']['num_blocks']],
