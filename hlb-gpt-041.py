@@ -831,6 +831,7 @@ def main() -> None:
         seed = args.seed
         for run in range(args.num_runs):
             change_model_scale(model_scalar, depth, width)  # has to run here; remove_layers influences hyp
+            depth = hyp['net']['num_blocks']  # remove_layers also influences depth in hyp; but I want to store the original depth. Need to get it here in case I changed it through model_scalar instead of depth
             global_run_num += 1
             title = (
                 f"::: STARTING RUN {global_run_num}/{total_num_runs} "
@@ -890,7 +891,7 @@ def main() -> None:
                 "final_val_loss_bw": [val_loss_bw],
                 "mask": [mask],
                 "model_scale": [model_scale],
-                "depth": [hyp['net']['num_blocks']],
+                "depth": depth,
                 "width": [hyp['net']['residual_depth']],
                 "num_params": [num_params],
                 "run_num": [run],
