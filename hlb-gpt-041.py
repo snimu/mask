@@ -881,7 +881,7 @@ def main() -> None:
                 cut_losses_bw.append(loss_bw)
                 cut_pplxs_bw.append(pplx_bw)
                 n_layers_removed.append(n)
-                print(f"{n=}, {acc_fw=}, {loss_fw=}, {pplx_fw=}, {acc_bw=}, {loss_bw=}, {pplx_bw=}\n")
+                print(f"{n=:.2f}, {acc_fw=:.2f}, {loss_fw=:.2f}, {pplx_fw=:.2f}, {acc_bw=:.2f}, {loss_bw=:.2f}, {pplx_bw=:.2f}\n")
 
             del net
 
