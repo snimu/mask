@@ -129,6 +129,7 @@ def change_model_scale(scale: float, depth: int | None = None, width: int | None
         del net
         default_params = 46_009_736
         model_scale = num_params / default_params
+        tokens_per_batch_capacity  = math.floor(gpu_token_capacity / (1.52174 + .482 * model_scale**(.87)))
         return
     
     model_scale = scale
