@@ -116,8 +116,14 @@ def change_gpu_token_capacity(factor: float):
     gpu_token_capacity = factor * 114688
 
 
-def change_model_scale(scale: float):
+def change_model_scale(scale: float, depth: int | None = None, width: int | None = None):
     global model_scale, tokens_per_batch_capacity, hyp
+    if depth is not None or width is not None:
+        assert width is not None and depth is not None
+        hyp['net']['residual_depth'] = to_nearest_64(depth)
+        hyp['net']['num_blocks'] = width
+        return
+    
     model_scale = scale
     tokens_per_batch_capacity  = math.floor(gpu_token_capacity / (1.52174 + .482 * model_scale**(.87)))
     hyp['net']['residual_depth'] = to_nearest_64(384 * math.log2(1.+model_scale))
@@ -749,6 +755,9 @@ def get_args() -> argparse.Namespace:
     parser.add_argument("--num_runs", type=int, default=1)
     parser.add_argument("--seed", type=int, default=100)
     parser.add_argument("--model_scale", type=float, default=1.0, nargs="+", help="The scale of the model to train.")
+    parser.add_argument("--scale_manually", action="store_true", help="If set, depth and width will be set through the cli.")
+    parser.add_argument("--depth", type=int, default=8, nargs="+", help="The depth of the model to train.")
+    parser.add_argument("--width", type=int, default=384, nargs="+", help="The width of the model to train.")
     parser.add_argument("--mask", type=str, choices=["forward", "backward", "bidirectional"], nargs="+", default="forward", help="The type of mask to use for the attention mechanism.")
     parser.add_argument("--backward_prob", type=float, default=1.0, nargs="+", help="Only relevant if mask==bidirectional")
     parser.add_argument("--adjust_backward_prob", type=int, nargs="+", default=0, help="If set, backward prob will be dynamically adjusted.")
@@ -765,6 +774,8 @@ def get_args() -> argparse.Namespace:
     args = parser.parse_args()
     args.mask = args.mask if isinstance(args.mask, list) else [args.mask]
     args.model_scale = args.model_scale if isinstance(args.model_scale, list) else [args.model_scale]
+    args.depth = args.depth if isinstance(args.depth, list) else [args.depth]
+    args.width = args.width if isinstance(args.width, list) else [args.width]
     args.backward_prob = args.backward_prob if isinstance(args.backward_prob, list) else [args.backward_prob]
     args.adjust_backward_prob = args.adjust_backward_prob if isinstance(args.adjust_backward_prob, list) else [args.adjust_backward_prob]
 
@@ -775,19 +786,24 @@ def get_args() -> argparse.Namespace:
 
 
 def get_settings(args: argparse.Namespace) -> list:
-    standard_settings = list(itertools.product(args.model_scale, args.mask))
+    if args.scale_manually:
+        standard_settings = list(itertools.product(args.depth, args.width, args.mask))
+        standard_settings = [(1.0, depth, width, mask) for depth, width, mask in standard_settings]
+    else:
+        standard_settings = list(itertools.product(args.model_scale, args.mask))
+        standard_settings = [(ms, None, None, mask) for ms, mask in standard_settings]
 
     bw_settings = [(bp, False) for bp in args.backward_prob if False in args.adjust_backward_prob]
     if True in args.adjust_backward_prob:
         bw_settings.append((1.0, True))
 
     combined_settings = [
-        (ms, mask, bp, adjust_backward_prob)
-        for ms, mask in standard_settings
+        (ms, depth, width, mask, bp, adjust_backward_prob)
+        for ms, depth, width, mask in standard_settings
         for bp, adjust_backward_prob in bw_settings
         if mask == "bidirectional"
     ]
-    combined_settings.extend([(ms, mask, 0.0, False) for ms, mask in standard_settings if mask != "bidirectional"])
+    combined_settings.extend([(ms, depth, width, mask, 0.0, False) for ms, depth, width, mask in standard_settings if mask != "bidirectional"])
     
     return combined_settings
 
@@ -800,8 +816,8 @@ def main() -> None:
     global hyp
     change_gpu_token_capacity(args.gpu_capacity_scalar)
 
-    for setting_num, (model_scale, mask, backward_prob, adjust_backward_prob) in enumerate(settings):
-        change_model_scale(model_scale)
+    for setting_num, (model_scale, depth, width, mask, backward_prob, adjust_backward_prob) in enumerate(settings):
+        change_model_scale(model_scale, depth, width)
         seed = args.seed
         for run in range(args.num_runs):
             global_run_num += 1
