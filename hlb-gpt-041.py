@@ -825,6 +825,7 @@ def main() -> None:
                 f"::: STARTING RUN {global_run_num}/{total_num_runs} "
                 f"(Setting {setting_num+1}/{len(settings)}, Run {run+1}/{args.num_runs})\n"
                 f":::    {mask=}\n:::    {model_scale=}\n"
+                f":::    {depth=}\n:::    {width=}\n"
                 f":::    {backward_prob=}\n:::    {adjust_backward_prob=}"
             )
             max_len = max(len(line) for line in title.split("\n"))
