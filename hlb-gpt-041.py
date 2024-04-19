@@ -307,6 +307,9 @@ def remove_layers(net: SpeedyLangNet, n: int) -> SpeedyLangNet:
     
     for _ in range(n):
         net.net_dict["attn_layers"].pop(-1)
+    
+    global hyp
+    hyp['net']['num_blocks'] -= n
 
     return net
 
@@ -825,9 +828,9 @@ def main() -> None:
     change_gpu_token_capacity(args.gpu_capacity_scalar)
 
     for setting_num, (model_scalar, depth, width, mask, backward_prob, adjust_backward_prob) in enumerate(settings):
-        change_model_scale(model_scalar, depth, width)
         seed = args.seed
         for run in range(args.num_runs):
+            change_model_scale(model_scalar, depth, width)  # has to run here; remove_layers influences hyp
             global_run_num += 1
             title = (
                 f"::: STARTING RUN {global_run_num}/{total_num_runs} "
