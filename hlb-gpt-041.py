@@ -820,11 +820,11 @@ def main() -> None:
     settings = get_settings(args)
     global_run_num = 0
     total_num_runs = int(len(settings) * args.num_runs)
-    global hyp
+    global hyp, model_scale
     change_gpu_token_capacity(args.gpu_capacity_scalar)
 
-    for setting_num, (model_scale, depth, width, mask, backward_prob, adjust_backward_prob) in enumerate(settings):
-        change_model_scale(model_scale, depth, width)
+    for setting_num, (model_scalar, depth, width, mask, backward_prob, adjust_backward_prob) in enumerate(settings):
+        change_model_scale(model_scalar, depth, width)
         seed = args.seed
         for run in range(args.num_runs):
             global_run_num += 1
