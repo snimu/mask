@@ -212,39 +212,41 @@ def plot_fw_bw(
         loglog: bool = False,
         plot_all: bool = False,
 ) -> None:
-    settings = get_unique_settings(file, ["initial_backward_prob"])
+    settings = get_unique_settings(file, ["initial_backward_prob", "adjust_backward_prob"])
     colors = generate_distinct_colors(len(settings)*2)
     col_num = 0
 
-    for initial_backward_prob in settings:
-            for direction in ("fw", "bw"):
-                color = colors[col_num]
-                col_num += 1
-                xs, ys, avg_ys = load_xs_ys_avg_y(
-                    file,
-                    mask=mask,
-                    initial_backward_prob=initial_backward_prob,
-                    depth=depth,
-                    width=width,
-                    to_plot=to_plot+f"_{direction}",
-                    plot_over=plot_over,
-                )
-                if plot_all:
-                    for y in ys:
-                        if loglog:
-                            plt.loglog(xs, y, color=color, alpha=0.2)
-                        else:
-                            plt.plot(xs, y, color=color, alpha=0.2)
-                
-                label = f"{to_plot}_{direction}_{initial_backward_prob=}"
-                if loglog:
-                    plt.loglog(xs, avg_ys, color=color, label=label)
-                else:
-                    plt.plot(xs, avg_ys, color=color, label=label)
+    for (initial_backward_prob, adjust_backward_prob) in settings:
+        for direction in ("fw", "bw"):
+            color = colors[col_num]
+            col_num += 1
+            xs, ys, avg_ys = load_xs_ys_avg_y(
+                file,
+                mask=mask,
+                initial_backward_prob=initial_backward_prob,
+                depth=depth,
+                width=width,
+                to_plot=to_plot+f"_{direction}",
+                plot_over=plot_over,
+                adjust_backward_prob=adjust_backward_prob,
+            )
+            if plot_all:
+                for y in ys:
+                    if loglog:
+                        plt.loglog(xs, y, color=color, alpha=0.2)
+                    else:
+                        plt.plot(xs, y, color=color, alpha=0.2)
+            
+            label = f"{direction} ({initial_backward_prob=})" + (" (adjusted)" if adjust_backward_prob else "")
+            if loglog:
+                plt.loglog(xs, avg_ys, color=color, label=label)
+            else:
+                plt.plot(xs, avg_ys, color=color, label=label)
 
     plt.xlabel(plot_over)
     plt.ylabel(to_plot)
     plt.legend()
+    plt.grid()
     plt.title(f"{to_plot} vs {plot_over}")
     plt.tight_layout()
     if show:
@@ -258,5 +260,5 @@ if __name__ == "__main__":
         plot_over="epoch",
         mask="bidirectional",
         show=True,
-        loglog=True,
+        loglog=False,
     )
