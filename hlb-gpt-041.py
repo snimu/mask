@@ -287,6 +287,16 @@ def make_net():
     return net
 
 
+def remove_layers(net: SpeedyLangNet, n: int) -> SpeedyLangNet:
+    if n >= len(net.net_dict["attn_layers"]):
+        raise ValueError(f"n may not be greater than the number of blocks! {n=}, n_blocks={len(net.net_dict['attn_layers'])}")
+    
+    for _ in range(n):
+        net.net_dict["attn_layers"].pop(-1)
+
+    return net
+
+
 ########################################
 #          Training Helpers            #
 ########################################
@@ -714,9 +724,8 @@ def train(
                 break
         curr_microbatch_step += 1
 
-    del net
-
     return (
+        net,
         val_loss_fw, val_loss_bw, total_trainable_params, train_losses, val_losses_forward,
         val_losses_backward, val_accs_backward, val_pplxs_backward,
         train_accs, val_accs_forward, val_pplxs_forward,
@@ -810,6 +819,7 @@ def main() -> None:
 
             torch.manual_seed(seed)
             (
+                net,
                 val_loss_fw, val_loss_bw, num_params, train_losses, val_losses_forward,
                 val_losses_backward, val_accs_backward, val_pplxs_backward,
                 train_accs, val_accs_forward, val_pplxs_forward,
@@ -830,6 +840,20 @@ def main() -> None:
                 backward_prob=backward_prob,
                 adjust_backward_prob=adjust_backward_prob,
             )
+
+            cut_accs_fw, cut_losses_fw, cut_pplxs_fw, cut_accs_bw, cut_losses_bw, cut_pplxs_bw, n_layers_removed = [], [], [], [], [], [], []
+            for n in range(1, hyp['net']['num_blocks']):
+                net = remove_layers(net, 1)  # reduce the depth one by one
+                acc_fw, loss_fw, pplx_fw, acc_bw, loss_bw, pplx_bw = eval(net)
+                cut_accs_fw.append(acc_fw)
+                cut_losses_fw.append(loss_fw)
+                cut_pplxs_fw.append(pplx_fw)
+                cut_accs_bw.append(acc_bw)
+                cut_losses_bw.append(loss_bw)
+                cut_pplxs_bw.append(pplx_bw)
+                n_layers_removed.append(n)
+
+            del net
 
             results = {
                 "final_val_loss_fw": [val_loss_fw],
@@ -861,6 +885,13 @@ def main() -> None:
                 "steps_val": [str(steps_val)],
                 "cumulative_times_val": [str(cumulative_times_val)],
                 "epoch_by_distinct_tokens_seen_val": [str(epoch_by_distinct_tokens_seen_val)],
+                "n_layers_removed": [str(n_layers_removed)],
+                "cut_accs_fw": [str(cut_accs_fw)],
+                "cut_losses_fw": [str(cut_losses_fw)],
+                "cut_pplxs_fw": [str(cut_pplxs_fw)],
+                "cut_accs_bw": [str(cut_accs_bw)],
+                "cut_losses_bw": [str(cut_losses_bw)],
+                "cut_pplxs_bw": [str(cut_pplxs_bw)],
             }
 
             df = pl.DataFrame(results)
