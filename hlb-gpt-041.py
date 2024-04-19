@@ -120,8 +120,8 @@ def change_model_scale(scale: float, depth: int | None = None, width: int | None
     global model_scale, tokens_per_batch_capacity, hyp
     if depth is not None or width is not None:
         assert width is not None and depth is not None
-        hyp['net']['residual_depth'] = to_nearest_64(depth)
-        hyp['net']['num_blocks'] = width
+        hyp['net']['residual_depth'] = width
+        hyp['net']['num_blocks'] = to_nearest_64(depth)
         return
     
     model_scale = scale
