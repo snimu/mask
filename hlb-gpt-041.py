@@ -868,6 +868,7 @@ def main() -> None:
 
             cut_accs_fw, cut_losses_fw, cut_pplxs_fw, cut_accs_bw, cut_losses_bw, cut_pplxs_bw, n_layers_removed = [], [], [], [], [], [], []
             for n in range(1, hyp['net']['num_blocks']):
+                print(f"Evaluating model with layers removed: {n}")
                 net = remove_layers(net, 1)  # reduce the depth one by one
                 acc_fw, loss_fw, pplx_fw, acc_bw, loss_bw, pplx_bw = eval(net)
                 cut_accs_fw.append(acc_fw)
@@ -877,6 +878,7 @@ def main() -> None:
                 cut_losses_bw.append(loss_bw)
                 cut_pplxs_bw.append(pplx_bw)
                 n_layers_removed.append(n)
+                print(f"{n=}, {acc_fw=}, {loss_fw=}, {pplx_fw=}, {acc_bw=}, {loss_bw=}, {pplx_bw=}\n")
 
             del net
 
