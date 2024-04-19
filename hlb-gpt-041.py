@@ -122,6 +122,13 @@ def change_model_scale(scale: float, depth: int | None = None, width: int | None
         assert width is not None and depth is not None
         hyp['net']['residual_depth'] = width
         hyp['net']['num_blocks'] = to_nearest_64(depth)
+
+        # Adapt model scale
+        net = make_net()
+        num_params = sum(p.numel() for p in net.parameters() if p.requires_grad)
+        del net
+        default_params = 46_009_736
+        model_scale = num_params / default_params
         return
     
     model_scale = scale
