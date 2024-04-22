@@ -206,42 +206,53 @@ def plot_fw_bw(
         to_plot: Literal["val_losses", "train_losses", "val_accs", "train_accs", "val_pplxs"] = "val_losses",
         plot_over: Literal["step", "epoch", "epoch_unique_token", "token", "time_sec"] = "epoch",
         mask: Literal["forward", "backward", "bidirectional"] | None = None,
-        depth: int = 8,
-        width: int = 384,
+        initial_backward_prob: float | None = None,
+        adjust_backward_prob: bool | None = None,
+        depth: int | None = 8,
+        width: int | None = 384,
         show: bool = True,
         loglog: bool = False,
         plot_all: bool = False,
 ) -> None:
-    settings = get_unique_settings(file, ["initial_backward_prob", "adjust_backward_prob"])
+    settings = get_unique_settings(file, ["initial_backward_prob", "adjust_backward_prob", "depth", "width"])
+    if initial_backward_prob is not None:
+        settings = [(bp, ap, d, w) for bp, ap, d, w in settings if bp == initial_backward_prob]
+    if adjust_backward_prob is not None:
+        settings = [(bp, ap, d, w) for bp, ap, d, w in settings if ap == adjust_backward_prob]
+    if depth is not None:
+        settings = [(bp, ap, d, w) for bp, ap, d, w in settings if d == depth]
+    if width is not None:
+        settings = [(bp, ap, d, w) for bp, ap, d, w in settings if w == width]
     colors = generate_distinct_colors(len(settings)*2)
     col_num = 0
 
-    for (initial_backward_prob, adjust_backward_prob) in settings:
+    for (initial_backward_prob_, adjust_backward_prob_, depth_, width_) in settings:
         for direction in ("fw", "bw"):
             color = colors[col_num]
             col_num += 1
             xs, ys, avg_ys = load_xs_ys_avg_y(
                 file,
                 mask=mask,
-                initial_backward_prob=initial_backward_prob,
-                depth=depth,
-                width=width,
+                initial_backward_prob=initial_backward_prob_,
+                depth=depth_,
+                width=width_,
                 to_plot=to_plot+f"_{direction}",
                 plot_over=plot_over,
-                adjust_backward_prob=adjust_backward_prob,
+                adjust_backward_prob=adjust_backward_prob_,
             )
+            linestyle = "-" if direction == "fw" else "--"
             if plot_all:
                 for y in ys:
                     if loglog:
-                        plt.loglog(xs, y, color=color, alpha=0.2)
+                        plt.loglog(xs, y, color=color, alpha=0.2, linestyle=linestyle)
                     else:
-                        plt.plot(xs, y, color=color, alpha=0.2)
+                        plt.plot(xs, y, color=color, alpha=0.2, linestyle=linestyle)
             
-            label = f"{direction} ({initial_backward_prob=})" + (" (adjusted)" if adjust_backward_prob else "")
+            label = f"{direction}, p_bw=({initial_backward_prob_}), depth={depth_}, width={width_}" + (" (adjusted)" if adjust_backward_prob_ else "")
             if loglog:
-                plt.loglog(xs, avg_ys, color=color, label=label)
+                plt.loglog(xs, avg_ys, color=color, label=label, linestyle=linestyle)
             else:
-                plt.plot(xs, avg_ys, color=color, label=label)
+                plt.plot(xs, avg_ys, color=color, label=label, linestyle=linestyle)
 
     plt.xlabel(plot_over)
     plt.ylabel(to_plot)
@@ -255,10 +266,14 @@ def plot_fw_bw(
 
 if __name__ == "__main__":
     plot_fw_bw(
-        file="results/results_fw_bw.csv",
+        file="results/results_scaling_fw_bw.csv",
         to_plot="val_losses",
         plot_over="epoch",
         mask="bidirectional",
+        adjust_backward_prob=False,
+        initial_backward_prob=0.1,
+        depth=8,
+        width=None,
         show=True,
-        loglog=False,
+        loglog=True,
     )
