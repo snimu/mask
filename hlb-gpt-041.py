@@ -336,9 +336,9 @@ BW_TOKEN = FW_TOKEN + 1
 def split_batch(sampled_sequences: torch.Tensor, direction: Literal["fw", "bw"] | None = None):
     batchsize = sampled_sequences.shape[0]
     if direction == "fw":
-        sampled_sequences = torch.concat([FW_TOKEN.repeat(batchsize).unsqueeze(0), sampled_sequences[:, :-1]], dim=1)
+        sampled_sequences = torch.concat([FW_TOKEN.repeat(batchsize).unsqueeze(1), sampled_sequences[:, :-1]], dim=1)
     elif direction == "bw":
-        sampled_sequences = torch.concat([sampled_sequences[:, :-1], BW_TOKEN.repeat(batchsize).unsqueeze(0)], dim=1)
+        sampled_sequences = torch.concat([sampled_sequences[:, :-1], BW_TOKEN.repeat(batchsize).unsqueeze(1)], dim=1)
     inputs, targets  = sampled_sequences[:, :-1], sampled_sequences[:, 1:] # reslice to get our input tokens and our shifted-by-1 targets
     if direction == "bw":
         inputs, targets = targets, inputs
