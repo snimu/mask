@@ -210,29 +210,34 @@ def plot_fw_bw(
         adjust_backward_prob: bool | None = None,
         depth: int | None = 8,
         width: int | None = 384,
+        fw_only: bool = False,
         show: bool = True,
         loglog: bool = False,
         plot_all: bool = False,
 ) -> None:
-    settings = get_unique_settings(file, ["initial_backward_prob", "adjust_backward_prob", "depth", "width"])
+    settings = get_unique_settings(file, ["mask", "initial_backward_prob", "adjust_backward_prob", "depth", "width"])
+
+    if mask is not None:
+        settings = [(ma, bp, ap, d, w) for ma, bp, ap, d, w in settings if ma == mask]
     if initial_backward_prob is not None:
-        settings = [(bp, ap, d, w) for bp, ap, d, w in settings if bp == initial_backward_prob]
+        settings = [(ma, bp, ap, d, w) for ma, bp, ap, d, w in settings if bp == initial_backward_prob or ma == "forward"]
     if adjust_backward_prob is not None:
-        settings = [(bp, ap, d, w) for bp, ap, d, w in settings if ap == adjust_backward_prob]
+        settings = [(ma, bp, ap, d, w) for ma, bp, ap, d, w in settings if ap == adjust_backward_prob]
     if depth is not None:
-        settings = [(bp, ap, d, w) for bp, ap, d, w in settings if d == depth]
+        settings = [(ma, bp, ap, d, w) for ma, bp, ap, d, w in settings if d == depth]
     if width is not None:
-        settings = [(bp, ap, d, w) for bp, ap, d, w in settings if w == width]
+        settings = [(ma, bp, ap, d, w) for ma, bp, ap, d, w in settings if w == width]
+
     colors = generate_distinct_colors(len(settings)*2)
     col_num = 0
 
-    for (initial_backward_prob_, adjust_backward_prob_, depth_, width_) in settings:
-        for direction in ("fw", "bw"):
+    for (mask_, initial_backward_prob_, adjust_backward_prob_, depth_, width_) in settings:
+        for direction in ("fw",) if fw_only else ("fw", "bw"):
             color = colors[col_num]
             col_num += 1
             xs, ys, avg_ys = load_xs_ys_avg_y(
                 file,
-                mask=mask,
+                mask=mask_,
                 initial_backward_prob=initial_backward_prob_,
                 depth=depth_,
                 width=width_,
@@ -248,11 +253,15 @@ def plot_fw_bw(
                     else:
                         plt.plot(xs, y, color=color, alpha=0.2, linestyle=linestyle)
             
-            label = f"{direction}, p_bw=({initial_backward_prob_}), depth={depth_}, width={width_}" + (" (adjusted)" if adjust_backward_prob_ else "")
+            label = f"mask={mask_}, {direction}, p_bw=({initial_backward_prob_}), depth={depth_}, width={width_}" + (" (adjusted)" if adjust_backward_prob_ else "")
             if loglog:
-                plt.loglog(xs, avg_ys, color=color, label=label, linestyle=linestyle)
+                plt.loglog(xs, avg_ys, color=color if plot_all else None, label=label, linestyle=linestyle)
             else:
-                plt.plot(xs, avg_ys, color=color, label=label, linestyle=linestyle)
+                plt.plot(xs, avg_ys, color=color if plot_all else None, label=label, linestyle=linestyle)
+
+
+    fig = plt.gcf()
+    fig.set_size_inches(12, 7)
 
     plt.xlabel(plot_over)
     plt.ylabel(to_plot)
@@ -262,18 +271,86 @@ def plot_fw_bw(
     plt.tight_layout()
     if show:
         plt.show()
+    close_plt()
+
+
+def plot_heatmap_depth_width_perf_forward_by_perf_bidirectional(
+        file: str,
+        initial_backward_prob: float,
+        adjust_bakward_prob: bool,
+        to_plot: Literal["val_losses", "train_losses", "val_accs", "train_accs", "val_pplxs"] = "val_losses",
+        plot_over: Literal["step", "epoch", "epoch_unique_token", "token", "time_sec"] = "epoch",
+        show: bool = True,
+): 
+    ...
+
+
+def plot_perf_forward_by_perf_bideirectional_over_num_params(
+        file: str,
+        initial_backward_prob: float,
+        adjust_bakward_prob: bool,
+        to_plot: Literal["val_losses", "train_losses", "val_accs", "train_accs", "val_pplxs"] = "val_losses",
+        plot_over: Literal["step", "epoch", "epoch_unique_token", "token", "time_sec"] = "epoch",
+        direction: Literal["fw", "bw"] = "fw",
+        show: bool = True,
+) -> None:
+    settings = get_unique_settings(file, ["num_params"])
+
+    for num_params in settings:
+        xs_fw, ys_fw, avg_ys_fw = load_xs_ys_avg_y(
+            file,
+            mask="forward",
+            num_params=num_params,
+            to_plot=f"{to_plot}_{direction}",
+            plot_over=plot_over,
+        )
+        xs_bw, ys_bw, avg_ys_bw = load_xs_ys_avg_y(
+            file,
+            mask="bidirectional",
+            initial_backward_prob=initial_backward_prob,
+            adjust_backward_prob=adjust_bakward_prob,
+            num_params=num_params,
+            to_plot=f"{to_plot}_{direction}",
+            plot_over=plot_over,
+        )
+        # Linearly interpolate such that the x-values are guaranteed to align
+        # choose the x-values that go the lowest epoch/step/... (though they should be the same)
+        chosen_xs = min([xs_fw, xs_bw], key=lambda xs: max(xs))  
+        avg_ys_fw = np.interp(chosen_xs, xs_fw, avg_ys_fw)
+        avg_ys_bw = np.interp(chosen_xs, xs_bw, avg_ys_bw)
+
+        fw_bw_ratio = avg_ys_fw / avg_ys_bw
+
+        plt.plot(chosen_xs, fw_bw_ratio, label=f"{num_params}")
+
+    plt.title(f"{to_plot}_{direction}: ratio forward- to bidirectional mask over number of parameters")
+    plt.xlabel("#parameters")
+    plt.ylabel(f"{to_plot}-{direction} ratio forward/bidirectional mask")
+    plt.grid()
+    plt.legend()
+    plt.tight_layout()
+    if show:
+        plt.show()
+    close_plt()
 
 
 if __name__ == "__main__":
-    plot_fw_bw(
-        file="results/results_scaling_fw_bw.csv",
-        to_plot="val_losses",
-        plot_over="epoch",
-        mask="bidirectional",
-        adjust_backward_prob=False,
-        initial_backward_prob=0.1,
-        depth=8,
-        width=None,
-        show=True,
-        loglog=True,
+    file = "results/results_scaling_fw_bw.csv"
+    # plot_fw_bw(
+        # file=file,
+    #     to_plot="val_losses",
+    #     plot_over="epoch",
+    #     mask=None,
+    #     adjust_backward_prob=False,
+    #     initial_backward_prob=0.05,
+    #     depth=None,
+    #     width=768,
+    #     fw_only=True,
+    #     show=True,
+    #     loglog=False,
+    # )
+    plot_perf_forward_by_perf_bideirectional_over_num_params(
+        file=file,
+        initial_backward_prob=0.05,
+        adjust_bakward_prob=False,
     )
