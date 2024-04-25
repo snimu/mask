@@ -285,10 +285,11 @@ class SpeedyLangNet(nn.Module):
 
 def make_net():
     network_dict = nn.ModuleDict({
-        'embedding': nn.Embedding(hyp['misc']['num_tokens'], hyp['net']['residual_depth'], scale_grad_by_freq=True),
+        # Add two special tokens for the forward and backward pass, even if they are unused
+        'embedding': nn.Embedding(hyp['misc']['num_tokens']+2, hyp['net']['residual_depth'], scale_grad_by_freq=True),
         'attn_layers': nn.ModuleList([LatentAttentionBlock(hyp['net']['residual_depth']) for _ in range(hyp['net']['num_blocks'])]),
         'norm': nn.LayerNorm(hyp['net']['residual_depth'], bias=False),
-        'outputs': nn.Linear(hyp['net']['residual_depth'], hyp['misc']['num_tokens'], bias=False),
+        'outputs': nn.Linear(hyp['net']['residual_depth'], hyp['misc']['num_tokens']+2, bias=False),
 })
     net = SpeedyLangNet(network_dict)
     net = net.to(hyp['misc']['device'], torch.bfloat16)
@@ -319,15 +320,31 @@ def remove_layers(net: SpeedyLangNet, n: int) -> SpeedyLangNet:
 ########################################
 
 # Get a single batch item. Currently used in the training loop
-@torch.no_grad
+@torch.no_grad()
 def get_batch(data_dict, key, batchsize, length):
     start_indexes     = torch.randint(len(data_dict[key])-length-1, (batchsize,), device=hyp['misc']['device']) # warning, completely random sampling, not a random derangement, that might help performance a bit!
     sequence_indexes  = start_indexes.unsqueeze(-1) + batch_index_offsets[:length+1].unsqueeze(0) # slice, as batch_index_offsets are pre-allocated to max length for efficiency
     sampled_sequences = torch.take_along_dim(data_dict[key], sequence_indexes.flatten(), dim=0).view(batchsize, length+1).long() # have to flatten and reshape due to take_along_dim being 1d
+    return sampled_sequences
 
+
+FW_TOKEN = torch.Tensor(hyp['misc']['num_tokens'], device=hyp['misc']['device'], dtype=torch.int)
+BW_TOKEN = FW_TOKEN + 1
+
+
+@torch.no_grad()
+def split_batch(sampled_sequences: torch.Tensor, direction: Literal["fw", "bw"] | None = None):
+    batchsize = sampled_sequences.shape[0]
+    if direction == "fw":
+        sampled_sequences = torch.concat([FW_TOKEN.repeat(batchsize).unsqueeze(0), sampled_sequences[:, :-1]], dim=1)
+    elif direction == "bw":
+        sampled_sequences = torch.concat([sampled_sequences[:, :-1], BW_TOKEN.repeat(batchsize).unsqueeze(0)], dim=1)
     inputs, targets  = sampled_sequences[:, :-1], sampled_sequences[:, 1:] # reslice to get our input tokens and our shifted-by-1 targets
+    if direction == "bw":
+        inputs, targets = targets, inputs
 
     return inputs, targets
+
 
 # Make loss function
 loss_fn = nn.CrossEntropyLoss(reduction='mean', ignore_index=-1)
@@ -431,7 +448,7 @@ def format_for_table(var_list, locals):
 #           Train and Eval             #
 ########################################
 
-def eval(net):
+def eval(net, use_extra_tokens=False):
     ####################
     # Evaluation  Mode #
     ####################
@@ -452,10 +469,13 @@ def eval(net):
     with torch.no_grad():
         # Note: We eval at the maximum sequence length so that we can get an idea of how well the sequence length growing extrapolates out
         for _ in range(num_eval_steps):
+            sampled_sequences = get_batch(data, key='eval', batchsize=eval_batchsize, length=hyp['misc']['sequence_length']['max'])
+
+
             causal_mask = causal_mask_forward
             position_bias_base = position_bias_base_forward
             causality = "forward"
-            inputs, targets = get_batch(data, key='eval', batchsize=eval_batchsize, length=hyp['misc']['sequence_length']['max'])
+            inputs, targets = split_batch(sampled_sequences, direction="fw" if use_extra_tokens else None)
             outputs = net(inputs)
             val_loss_forward += 1./num_eval_steps * loss_fn(outputs.flatten(0, 1).float(), targets.flatten(0, 1))
             val_acc_forward  += 1./num_eval_steps * (outputs.argmax(-1) == targets).float().mean()
@@ -463,7 +483,7 @@ def eval(net):
             causal_mask = causal_mask_backward
             position_bias_base = position_bias_base_backward
             causality = "backward"
-            inputs, targets = targets, inputs
+            inputs, targets = split_batch(sampled_sequences, direction="bw" if use_extra_tokens else None)
             outputs = net(inputs)
             val_loss_backward += 1./num_eval_steps * loss_fn(outputs.flatten(0, 1).float(), targets.flatten(0, 1))
             val_acc_backward  += 1./num_eval_steps * (outputs.argmax(-1) == targets).float().mean()
@@ -479,40 +499,41 @@ def eval(net):
 
 def compute_loss(
         net: SpeedyLangNet,
-        inputs: torch.Tensor,
-        targets: torch.Tensor,
+        sampled_sequences: torch.Tensor,
         tokens_seen: int,
         mask: Literal["forward", "backward", "bidirectional"],
         curr_batchsize: int,
         curr_length: int,
         discrete_sampled_microbatch_steps: int,
         backward_prob: float = 1.0,
-) -> tuple[torch.Tensor, torch.Tensor, float, float, int]:
+        use_extra_tokens: bool = False,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, float, float, int]:
     """Returns outputs, loss, loss_fw, loss_bw, tokens_seen. Does *not* call `backward` on loss."""
     global causal_mask, causal_mask_backward, causal_mask_forward, causality
     global position_bias_base, position_bias_base_forward, position_bias_base_backward
 
     loss_fw, loss_bw = 0.0, 0.0
 
+    inputs_fw, targets_fw = split_batch(sampled_sequences, direction="fw" if use_extra_tokens else None)
+    inputs_bw, targets_bw = split_batch(sampled_sequences, direction="bw" if use_extra_tokens else None)
     if mask in ("forward", "bidirectional"):
         causal_mask = causal_mask_forward
         position_bias_base = position_bias_base_forward
         causality = "forward"
-        outputs = net(inputs)
-        loss_fw = loss_fn(outputs.flatten(0, 1), targets.flatten(0, 1))
+        outputs = net(inputs_fw)
+        loss_fw = loss_fn(outputs.flatten(0, 1), targets_fw.flatten(0, 1))
         tokens_seen += curr_batchsize * curr_length
     if mask == "backward" or (mask == "bidirectional" and (torch.randint(0, 1000, (1,)).item() / 1000 <= backward_prob)):
         causal_mask = causal_mask_backward
         position_bias_base = position_bias_base_backward
         causality = "backward"
-        inputs, targets = targets, inputs
-        outputs = net(inputs)
-        loss_bw = loss_fn(outputs.flatten(0, 1), targets.flatten(0, 1))
+        outputs = net(inputs_bw)
+        loss_bw = loss_fn(outputs.flatten(0, 1), targets_bw.flatten(0, 1))
         tokens_seen += curr_batchsize * curr_length
         
     loss = loss_fw + loss_bw
     loss = loss.div(discrete_sampled_microbatch_steps)
-    return outputs, loss, float(loss_fw), float(loss_bw), tokens_seen
+    return outputs, loss, inputs_fw, targets_fw, inputs_bw, targets_bw, float(loss_fw), float(loss_bw), tokens_seen
     
 
 
@@ -524,6 +545,7 @@ def train(
         max_epochs_between_vals: float,
         backward_prob: float,
         adjust_backward_prob: bool,
+        use_extra_tokens: bool,
 ):
 
     #################
@@ -622,18 +644,18 @@ def train(
 
     # Main loop. Most of the complexity here is in the dynamic growing scheduler(s).
     while curr_step < num_steps_train:
-        inputs, targets = get_batch(data, key='train', batchsize=curr_batchsize, length=curr_length)
+        sampled_sequences = get_batch(data, key='train', batchsize=curr_batchsize, length=curr_length)
 
-        outputs, loss, loss_fw, loss_bw, tokens_seen = compute_loss(
+        outputs, loss, inputs_fw, targets_fw, inputs_bw, targets_bw, loss_fw, loss_bw, tokens_seen = compute_loss(
             net=net,
-            inputs=inputs,
-            targets=targets,
+            sampled_sequences=sampled_sequences,
             tokens_seen=tokens_seen,
             mask=mask,
             curr_batchsize=curr_batchsize,
             curr_length=curr_length,
             discrete_sampled_microbatch_steps=discrete_sampled_microbatch_steps,
             backward_prob=backward_prob,
+            use_extra_tokens=use_extra_tokens,
         )
         loss.backward()
         backward_probs.append(backward_prob)
@@ -642,11 +664,11 @@ def train(
             backward_prob = max(min(1.0, pplx_bw / pplx_fw), 0.01)  # if backward is easier, do it less frequently (but not never)
 
         epoch = tokens_seen/len(data['train'])
-        distinct_tokens_seen += len(inputs)
+        distinct_tokens_seen += len(inputs_fw)
 
         # Quick non-eval summary every N training steps, at the end of every microbatch group, if we are not doing a _full eval_ here.
         if curr_step % 10 == 0 and curr_microbatch_step % discrete_sampled_microbatch_steps == 0:
-            train_acc          = (outputs.detach().argmax(-1) == targets).float().mean().item()
+            train_acc          = (outputs.detach().argmax(-1) == targets_fw).float().mean().item()
             train_loss         = loss.detach().cpu().item()
 
             epoch_list_train.append(epoch)
@@ -712,7 +734,7 @@ def train(
                 train_loss = loss.detach().cpu().item() # Update the loss for the training details printout
 
                 net.eval()
-                val_acc_fw, val_loss_fw, pplx_fw, val_acc_bw, val_loss_bw, pplx_bw = eval(net)
+                val_acc_fw, val_loss_fw, pplx_fw, val_acc_bw, val_loss_bw, pplx_bw = eval(net, use_extra_tokens=use_extra_tokens)
                 
                 val_losses_forward.append(val_loss_fw)
                 val_accs_forward.append(val_acc_fw)
@@ -772,6 +794,7 @@ def get_args() -> argparse.Namespace:
     parser.add_argument("--mask", type=str, choices=["forward", "backward", "bidirectional"], nargs="+", default="forward", help="The type of mask to use for the attention mechanism.")
     parser.add_argument("--backward_prob", type=float, default=1.0, nargs="+", help="Only relevant if mask==bidirectional")
     parser.add_argument("--adjust_backward_prob", type=int, nargs="+", default=0, help="If set, backward prob will be dynamically adjusted.")
+    parser.add_argument("--use_extra_tokens", action="store_true", help="If set, the model will use extra tokens for the forward and backward pass.")
 
     parser.add_argument("--num_tokens_train", type=int, default=int(1e12))
     parser.add_argument("--num_tokens_val", type=int, default=int(1e12))
@@ -868,13 +891,14 @@ def main() -> None:
                 max_epochs_between_vals=args.max_epochs_between_vals,
                 backward_prob=backward_prob,
                 adjust_backward_prob=adjust_backward_prob,
+                use_extra_tokens=args.use_extra_tokens,
             )
 
             cut_accs_fw, cut_losses_fw, cut_pplxs_fw, cut_accs_bw, cut_losses_bw, cut_pplxs_bw, n_layers_removed = [], [], [], [], [], [], []
             for n in range(1, hyp['net']['num_blocks']):
                 print(f"Evaluating model with layers removed: {n}")
                 net = remove_layers(net, 1)  # reduce the depth one by one
-                acc_fw, loss_fw, pplx_fw, acc_bw, loss_bw, pplx_bw = eval(net)
+                acc_fw, loss_fw, pplx_fw, acc_bw, loss_bw, pplx_bw = eval(net, use_extra_tokens=args.use_extra_tokens)
                 cut_accs_fw.append(acc_fw)
                 cut_losses_fw.append(loss_fw)
                 cut_pplxs_fw.append(pplx_fw)
