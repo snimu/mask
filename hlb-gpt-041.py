@@ -328,7 +328,7 @@ def get_batch(data_dict, key, batchsize, length):
     return sampled_sequences
 
 
-FW_TOKEN = torch.Tensor(hyp['misc']['num_tokens'], device=hyp['misc']['device'], dtype=torch.int)
+FW_TOKEN = torch.tensor(hyp['misc']['num_tokens'], device=hyp['misc']['device'], dtype=torch.int)
 BW_TOKEN = FW_TOKEN + 1
 
 
@@ -921,6 +921,7 @@ def main() -> None:
                 "run_num": [run],
                 "seed": [seed],
                 "adjust_backward_prob": [adjust_backward_prob],
+                "use_extra_tokens": [args.use_extra_tokens],
                 "initial_backward_prob": [backward_prob],
                 "backward_probs": [str(backward_probs)],
                 "train_losses": [str(train_losses)],
