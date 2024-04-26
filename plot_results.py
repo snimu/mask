@@ -5,6 +5,8 @@ from typing import Literal
 import colorsys
 import matplotlib.pyplot as plt
 import polars as pl
+import pandas as pd
+import seaborn as sns
 import numpy as np
 
 
@@ -282,7 +284,99 @@ def plot_heatmap_depth_width_perf_forward_by_perf_bidirectional(
         plot_over: Literal["step", "epoch", "epoch_unique_token", "token", "time_sec"] = "epoch",
         show: bool = True,
 ): 
-    ...
+    df = pd.read_csv(file)
+    df_fw = df[df["mask"] == "forward"]
+    df_bd = df[
+        (df["mask"] == "bidirectional") 
+        & (df["initial_backward_prob"] == initial_backward_prob) 
+        & (df["adjust_backward_prob"] == adjust_bakward_prob)
+    ]
+
+    fig, axs = plt.subplots(1, 2, figsize=(12, 6))
+
+    depths_fw = df_fw["depth"].unique()
+    widths_fw = df_fw["width"].unique()
+
+    depths_bd = df_bd["depth"].unique()
+    widths_bd = df_bd["width"].unique()
+
+    data_fw = {"depth": [], "width": [], "ratio": []}
+    for depth in depths_fw:
+        for width in widths_fw:
+            xs_fw, _, avg_ys_fw = load_xs_ys_avg_y(
+                file,
+                mask="forward",
+                depth=depth,
+                width=width,
+                to_plot=f"{to_plot}_fw",
+                plot_over=plot_over,
+            )
+            xs_bd, _, avg_ys_bd = load_xs_ys_avg_y(
+                file,
+                mask="bidirectional",
+                initial_backward_prob=initial_backward_prob,
+                adjust_backward_prob=adjust_bakward_prob,
+                depth=depth,
+                width=width,
+                to_plot=f"{to_plot}_fw",
+                plot_over=plot_over,
+            )
+            chosen_xs = min([xs_fw, xs_bd], key=lambda xs: max(xs))
+            avg_ys_fw = np.interp(chosen_xs, xs_fw, avg_ys_fw)
+            avg_ys_bd = np.interp(chosen_xs, xs_bd, avg_ys_bd)
+
+            fw_bd_ratio = avg_ys_fw.min() / avg_ys_bd.min()
+            data_fw["depth"].append(depth)
+            data_fw["width"].append(width)
+            data_fw["ratio"].append(fw_bd_ratio.item())
+
+    data_bw = {"depth": [], "width": [], "ratio": []}
+    for depth in depths_bd:
+        for width in widths_bd:
+            xs_fw, _, avg_ys_fw = load_xs_ys_avg_y(
+                file,
+                mask="forward",
+                depth=depth,
+                width=width,
+                to_plot=f"{to_plot}_bw",
+                plot_over=plot_over,
+            )
+            xs_bd, _, avg_ys_bd = load_xs_ys_avg_y(
+                file,
+                mask="bidirectional",
+                initial_backward_prob=initial_backward_prob,
+                adjust_backward_prob=adjust_bakward_prob,
+                depth=depth,
+                width=width,
+                to_plot=f"{to_plot}_bw",
+                plot_over=plot_over,
+            )
+            chosen_xs = min([xs_fw, xs_bd], key=lambda xs: max(xs))
+            avg_ys_fw = np.interp(chosen_xs, xs_fw, avg_ys_fw)
+            avg_ys_bd = np.interp(chosen_xs, xs_bd, avg_ys_bd)
+
+            fw_bd_ratio = avg_ys_fw.min() / avg_ys_bd.min()
+            data_bw["depth"].append(depth)
+            data_bw["width"].append(width)
+            data_bw["ratio"].append(fw_bd_ratio.item())
+
+    pivot_table_fw = pd.pivot_table(pd.DataFrame(data_fw), values="ratio", index="depth", columns="width")
+    pivot_table_bd = pd.pivot_table(pd.DataFrame(data_bw), values="ratio", index="depth", columns="width")
+
+    sns.heatmap(pivot_table_fw, ax=axs[0], cmap="coolwarm", annot=True, fmt=".4f", cbar=True, annot_kws={"color": "white"})
+    axs[0].set_title(f"{to_plot}_fw ratio forward/bidirectional mask")
+    axs[0].set_xlabel("Width")
+    axs[0].set_ylabel("Depth")
+
+    sns.heatmap(pivot_table_bd, ax=axs[1], cmap="coolwarm", annot=True, fmt=".4f", cbar=True, annot_kws={"color": "white"})
+    axs[1].set_title(f"{to_plot}_bw ratio forward/bidirectional mask")
+    axs[1].set_xlabel("Width")
+    axs[1].set_ylabel("Depth")
+
+    plt.tight_layout()
+    if show:
+        plt.show()
+    close_plt()
 
 
 def plot_perf_forward_by_perf_bideirectional_over_num_params(
@@ -337,7 +431,7 @@ def plot_perf_forward_by_perf_bideirectional_over_num_params(
 if __name__ == "__main__":
     file = "results/results_scaling_fw_bw.csv"
     # plot_fw_bw(
-        # file=file,
+    #     file=file,
     #     to_plot="val_losses",
     #     plot_over="epoch",
     #     mask=None,
@@ -349,8 +443,15 @@ if __name__ == "__main__":
     #     show=True,
     #     loglog=False,
     # )
-    plot_perf_forward_by_perf_bideirectional_over_num_params(
+    # plot_perf_forward_by_perf_bideirectional_over_num_params(
+    #     file=file,
+    #     initial_backward_prob=0.05,
+    #     adjust_bakward_prob=False,
+    # )
+    plot_heatmap_depth_width_perf_forward_by_perf_bidirectional(
         file=file,
         initial_backward_prob=0.05,
         adjust_bakward_prob=False,
+        to_plot="val_losses",
+        plot_over="epoch",
     )

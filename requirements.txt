@@ -1,3 +1,7 @@
 polars
 tiktoken
 torch
+seaborn
+polars
+matplotlib
+pandas
