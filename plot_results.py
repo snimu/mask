@@ -26,6 +26,17 @@ def series_to_array(series: pl.Series) -> np.ndarray:
         return np.array(ast.literal_eval(series))
 
 
+def format_num_params(num_params: int) -> str:
+    if num_params < 1_000:
+        return str(num_params)
+    elif num_params < 1_000_000:
+        return f"{num_params/1_000:.1f}k"
+    elif num_params < 1_000_000_000:
+        return f"{num_params/1_000_000:.1f}M"
+    else:
+        return f"{num_params/1_000_000_000:.1f}B"
+
+
 def load_xs_ys_avg_y(
         file: str,
         mask: Literal["forward", "backward", "bidirectional"] | None = None,
@@ -254,8 +265,20 @@ def plot_fw_bw(
                         plt.loglog(xs, y, color=color, alpha=0.2, linestyle=linestyle)
                     else:
                         plt.plot(xs, y, color=color, alpha=0.2, linestyle=linestyle)
+
+            num_params = pl.scan_csv(file).filter(
+                (pl.col("mask") == mask_)
+                & (pl.col("initial_backward_prob") == (0.0 if mask_ == "forward" else initial_backward_prob_))
+                & (pl.col("adjust_backward_prob") == (False if mask_ == "forward" else adjust_backward_prob_))
+                & (pl.col("depth") == depth_)
+                & (pl.col("width") == width_)
+            ).collect()["num_params"][0]
             
-            label = f"mask={mask_}, {direction}, p_bw=({initial_backward_prob_}), depth={depth_}, width={width_}" + (" (adjusted)" if adjust_backward_prob_ else "")
+            label = (
+                f"mask={mask_}, {direction}, p_bw=({initial_backward_prob_}), "
+                f"depth={depth_}, width={width_}, #params={format_num_params(num_params)}"
+                f"{' (adjusted)' if adjust_backward_prob_ else ''}"
+            )
             if loglog:
                 plt.loglog(xs, avg_ys, color=color if plot_all else None, label=label, linestyle=linestyle)
             else:
@@ -429,29 +452,30 @@ def plot_perf_forward_by_perf_bideirectional_over_num_params(
 
 
 if __name__ == "__main__":
-    file = "results/results_scaling_fw_bw.csv"
-    # plot_fw_bw(
-    #     file=file,
-    #     to_plot="val_losses",
-    #     plot_over="epoch",
-    #     mask=None,
-    #     adjust_backward_prob=False,
-    #     initial_backward_prob=0.05,
-    #     depth=None,
-    #     width=768,
-    #     fw_only=True,
-    #     show=True,
-    #     loglog=False,
-    # )
+    # file = "results/results_scaling_fw_bw.csv"
+    file = "results/results_scaling_with_special_tokens_fw_bw.csv"
+    plot_fw_bw(
+        file=file,
+        to_plot="val_losses",
+        plot_over="epoch",
+        mask=None,
+        adjust_backward_prob=False,
+        initial_backward_prob=0.05,
+        depth=None,
+        width=768,
+        fw_only=True,
+        show=True,
+        loglog=False,
+    )
     # plot_perf_forward_by_perf_bideirectional_over_num_params(
     #     file=file,
     #     initial_backward_prob=0.05,
     #     adjust_bakward_prob=False,
     # )
-    plot_heatmap_depth_width_perf_forward_by_perf_bidirectional(
-        file=file,
-        initial_backward_prob=0.05,
-        adjust_bakward_prob=False,
-        to_plot="val_losses",
-        plot_over="epoch",
-    )
+    # plot_heatmap_depth_width_perf_forward_by_perf_bidirectional(
+    #     file=file,
+    #     initial_backward_prob=0.05,
+    #     adjust_bakward_prob=False,
+    #     to_plot="val_losses",
+    #     plot_over="epoch",
+    # )
