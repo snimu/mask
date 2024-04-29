@@ -4,6 +4,7 @@ from typing import Literal
 
 import colorsys
 import matplotlib.pyplot as plt
+from matplotlib import gridspec
 import polars as pl
 import pandas as pd
 import seaborn as sns
@@ -402,18 +403,87 @@ def plot_heatmap_depth_width_perf_forward_by_perf_bidirectional(
     close_plt()
 
 
+def get_ratio(
+        file: str, 
+        initial_backward_prob: float | None,
+        adjust_backward_prob: bool | None,
+        to_plot: str,
+        plot_over: str,
+        **settings,
+) -> tuple[np.ndarray, np.ndarray]:
+    xs_fw, _, avg_ys_fw = load_xs_ys_avg_y(
+        file,
+        mask="forward",
+        to_plot=to_plot,
+        plot_over=plot_over,
+        **settings,
+    )
+    xs_bw, _, avg_ys_bw = load_xs_ys_avg_y(
+        file,
+        mask="bidirectional",
+        initial_backward_prob=initial_backward_prob,
+        adjust_backward_prob=adjust_backward_prob,
+        to_plot=to_plot,
+        plot_over=plot_over,
+        **settings,
+    )
+    # Linearly interpolate such that the x-values are guaranteed to align
+    # choose the x-values that go the lowest epoch/step/... (though they should be the same)
+    chosen_xs = min([xs_fw, xs_bw], key=lambda xs: max(xs))  
+    avg_ys_fw = np.interp(chosen_xs, xs_fw, avg_ys_fw)
+    avg_ys_bw = np.interp(chosen_xs, xs_bw, avg_ys_bw)
+
+    fw_bw_ratio = avg_ys_fw / avg_ys_bw
+
+    return chosen_xs, fw_bw_ratio
+
+
+def unique_num_params(file: str) -> list[int]:
+    return (
+        pl.scan_csv(file)
+        .select("num_params")
+        .collect()
+        ["num_params"]
+        .unique()
+        .to_numpy()
+    )
+
+
+def unique_widths(file: str) -> list[int]:
+    return (
+        pl.scan_csv(file)
+        .select("width")
+        .collect()
+        ["width"]
+        .unique()
+        .to_numpy()
+    )
+
+
+def unique_depths(file: str) -> list[int]:
+    return (
+        pl.scan_csv(file)
+        .select("depth")
+        .collect()
+        ["depth"]
+        .unique()
+        .to_numpy()
+    )
+
+
 def plot_perf_forward_by_perf_bideirectional_over_num_params(
         file: str,
         initial_backward_prob: float,
-        adjust_bakward_prob: bool,
+        adjust_backward_prob: bool,
         to_plot: Literal["val_losses", "train_losses", "val_accs", "train_accs", "val_pplxs"] = "val_losses",
         plot_over: Literal["step", "epoch", "epoch_unique_token", "token", "time_sec"] = "epoch",
         direction: Literal["fw", "bw"] = "fw",
         show: bool = True,
+        moving_avg_window_size: int = 1,
 ) -> None:
     settings = get_unique_settings(file, ["num_params"])
 
-    for num_params in settings:
+    for (num_params,) in settings:
         xs_fw, ys_fw, avg_ys_fw = load_xs_ys_avg_y(
             file,
             mask="forward",
@@ -425,7 +495,7 @@ def plot_perf_forward_by_perf_bideirectional_over_num_params(
             file,
             mask="bidirectional",
             initial_backward_prob=initial_backward_prob,
-            adjust_backward_prob=adjust_bakward_prob,
+            adjust_backward_prob=adjust_backward_prob,
             num_params=num_params,
             to_plot=f"{to_plot}_{direction}",
             plot_over=plot_over,
@@ -438,10 +508,14 @@ def plot_perf_forward_by_perf_bideirectional_over_num_params(
 
         fw_bw_ratio = avg_ys_fw / avg_ys_bw
 
-        plt.plot(chosen_xs, fw_bw_ratio, label=f"{num_params}")
+        moving_averages = np.convolve(fw_bw_ratio, np.ones(moving_avg_window_size)/moving_avg_window_size, mode='valid')
+        # Pad the moving averages to aling with the x-values
+        moving_averages = np.concatenate((fw_bw_ratio[:moving_avg_window_size-1], moving_averages))
 
-    plt.title(f"{to_plot}_{direction}: ratio forward- to bidirectional mask over number of parameters")
-    plt.xlabel("#parameters")
+        plt.plot(chosen_xs, moving_averages, label=f"{format_num_params(num_params)}")
+
+    plt.title(f"{to_plot}_{direction}: ratio forward- to bidirectional mask by #params")
+    plt.xlabel(plot_over)
     plt.ylabel(f"{to_plot}-{direction} ratio forward/bidirectional mask")
     plt.grid()
     plt.legend()
@@ -451,26 +525,104 @@ def plot_perf_forward_by_perf_bideirectional_over_num_params(
     close_plt()
 
 
+def plot_ratio_over_num_params(
+        file: str,
+        initial_backward_prob: float,
+        adjust_backward_prob: bool,
+        to_plot: Literal["val_losses", "train_losses", "val_accs", "train_accs", "val_pplxs"] = "val_losses",
+        plot_over: Literal["step", "epoch", "epoch_unique_token", "token", "time_sec"] = "epoch",
+        direction: Literal["fw", "bw"] = "fw",
+        show: bool = True,
+) -> None:
+    param_nums = unique_num_params(file)
+    widths = unique_widths(file)
+    depths = unique_depths(file)
+    
+    ratios_num_params = []
+    for num_params in param_nums:
+        _, fw_bw_ratio = get_ratio(
+            file, 
+            to_plot=f"{to_plot}_{direction}", 
+            plot_over=plot_over,
+            initial_backward_prob=initial_backward_prob,
+            adjust_backward_prob=adjust_backward_prob,
+            num_params=num_params, 
+        )
+        ratios_num_params.append(fw_bw_ratio.tolist())
+
+    ratios_widths = []
+    for width in widths:
+        _, fw_bw_ratio = get_ratio(
+            file, 
+            to_plot=f"{to_plot}_{direction}", 
+            plot_over=plot_over,
+            initial_backward_prob=initial_backward_prob,
+            adjust_backward_prob=adjust_backward_prob,
+            width=width, 
+        )
+        ratios_widths.append(fw_bw_ratio.tolist())
+
+    ratios_depths = []
+    for depth in depths:
+        _, fw_bw_ratio = get_ratio(
+            file, 
+            to_plot=f"{to_plot}_{direction}", 
+            plot_over=plot_over,
+            initial_backward_prob=initial_backward_prob,
+            adjust_backward_prob=adjust_backward_prob,
+            depth=depth, 
+        )
+        ratios_depths.append(fw_bw_ratio.tolist())
+
+    plt.figure(figsize=(10, 8))
+    gs = gridspec.GridSpec(2, 2)
+    # plt.title(f"{to_plot}_{direction}: ratio forward mask to bidirectional mask by size")
+
+    ax0 = plt.subplot(gs[0, 0])
+    ax0.boxplot(ratios_depths, labels=depths)
+    ax0.set_xlabel("Depth")
+    ax0.set_ylabel(f"{to_plot}-{direction} ratio forward/bidirectional mask")
+    ax0.grid()
+
+    ax1 = plt.subplot(gs[0, 1])
+    ax1.boxplot(ratios_widths, labels=widths)
+    ax1.set_xlabel("Width")
+    ax1.grid()
+
+    ax2 = plt.subplot(gs[1, :])
+    ax2.boxplot(ratios_num_params, labels=[format_num_params(num) for num in param_nums])
+    ax2.set_xlabel("#params")
+    ax2.set_ylabel(f"{to_plot}-{direction} ratio forward/bidirectional mask")
+    ax2.grid()
+    
+
+    plt.tight_layout()
+    if show:
+        plt.show()
+    close_plt()
+
+
 if __name__ == "__main__":
     # file = "results/results_scaling_fw_bw.csv"
     file = "results/results_scaling_with_special_tokens_fw_bw.csv"
-    plot_fw_bw(
-        file=file,
-        to_plot="val_losses",
-        plot_over="epoch",
-        mask=None,
-        adjust_backward_prob=False,
-        initial_backward_prob=0.05,
-        depth=None,
-        width=768,
-        fw_only=True,
-        show=True,
-        loglog=False,
-    )
+    # plot_fw_bw(
+    #     file=file,
+    #     to_plot="val_losses",
+    #     plot_over="epoch",
+    #     mask=None,
+    #     adjust_backward_prob=False,
+    #     initial_backward_prob=0.05,
+    #     depth=None,
+    #     width=768,
+    #     fw_only=True,
+    #     show=True,
+    #     loglog=False,
+    # )
     # plot_perf_forward_by_perf_bideirectional_over_num_params(
     #     file=file,
     #     initial_backward_prob=0.05,
     #     adjust_bakward_prob=False,
+    #     moving_avg_window_size=5,
     # )
     # plot_heatmap_depth_width_perf_forward_by_perf_bidirectional(
     #     file=file,
@@ -479,3 +631,10 @@ if __name__ == "__main__":
     #     to_plot="val_losses",
     #     plot_over="epoch",
     # )
+    plot_ratio_over_num_params(
+        file=file,
+        initial_backward_prob=0.1,
+        adjust_backward_prob=False,
+        to_plot="val_losses",
+        plot_over="epoch",
+    )
