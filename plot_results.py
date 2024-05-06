@@ -579,9 +579,10 @@ def plot_ratio_over_num_params(
     # plt.title(f"{to_plot}_{direction}: ratio forward mask to bidirectional mask by size")
 
     ax0 = plt.subplot(gs[0, 0])
-    ax0.boxplot(ratios_depths, labels=depths)
+    # ax0.boxplot(ratios_depths, labels=depths)
+    ax0.violinplot(ratios_depths, positions=depths)
     ax0.set_xlabel("Depth")
-    ax0.set_ylabel(f"{to_plot}-{direction} ratio forward/bidirectional mask")
+    ax0.set_ylabel(f"{to_plot}_{direction}: M_0.0 / M_{initial_backward_prob}")
     ax0.grid()
 
     ax1 = plt.subplot(gs[0, 1])
@@ -592,13 +593,15 @@ def plot_ratio_over_num_params(
     ax2 = plt.subplot(gs[1, :])
     ax2.boxplot(ratios_num_params, labels=[format_num_params(num) for num in param_nums])
     ax2.set_xlabel("#params")
-    ax2.set_ylabel(f"{to_plot}-{direction} ratio forward/bidirectional mask")
+    ax2.set_ylabel(f"{to_plot}-{direction}: M_0.0 / M_{initial_backward_prob}")
     ax2.grid()
     
 
     plt.tight_layout()
     if show:
         plt.show()
+    else:
+        plt.savefig(f"results/images/boxplot_ratio_by_num_params_{to_plot}_{plot_over}.png", dpi=300)
     close_plt()
 
 
@@ -612,8 +615,8 @@ if __name__ == "__main__":
     #     mask=None,
     #     adjust_backward_prob=False,
     #     initial_backward_prob=0.05,
-    #     depth=None,
-    #     width=768,
+    #     depth=32,
+    #     width=None,
     #     fw_only=True,
     #     show=True,
     #     loglog=False,
@@ -633,8 +636,10 @@ if __name__ == "__main__":
     # )
     plot_ratio_over_num_params(
         file=file,
-        initial_backward_prob=0.1,
+        initial_backward_prob=0.05,
         adjust_backward_prob=False,
         to_plot="val_losses",
+        direction="fw",
         plot_over="epoch",
+        show=True,
     )
