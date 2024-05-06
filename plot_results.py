@@ -533,6 +533,7 @@ def plot_ratio_over_num_params(
         plot_over: Literal["step", "epoch", "epoch_unique_token", "token", "time_sec"] = "epoch",
         direction: Literal["fw", "bw"] = "fw",
         show: bool = True,
+        plot_type: Literal["boxplot", "violinplot"] = "boxplot",
 ) -> None:
     param_nums = unique_num_params(file)
     widths = unique_widths(file)
@@ -579,29 +580,42 @@ def plot_ratio_over_num_params(
     # plt.title(f"{to_plot}_{direction}: ratio forward mask to bidirectional mask by size")
 
     ax0 = plt.subplot(gs[0, 0])
-    # ax0.boxplot(ratios_depths, labels=depths)
-    ax0.violinplot(ratios_depths, positions=depths)
+    if plot_type == "boxplot":
+        ax0.boxplot(ratios_depths, labels=depths)
+    elif plot_type == "violinplot":
+        ax0.violinplot(ratios_depths)
+        ax0.set_xticks(np.arange(1, len(depths)+1))
+        ax0.set_xticklabels(depths)
     ax0.set_xlabel("Depth")
     ax0.set_ylabel(f"{to_plot}_{direction}: M_0.0 / M_{initial_backward_prob}")
     ax0.grid()
 
     ax1 = plt.subplot(gs[0, 1])
-    ax1.boxplot(ratios_widths, labels=widths)
+    if plot_type == "boxplot":
+        ax1.boxplot(ratios_widths, labels=widths)
+    elif plot_type == "violinplot":
+        ax1.violinplot(ratios_widths)
+        ax1.set_xticks(np.arange(1, len(widths)+1))
+        ax1.set_xticklabels(widths)
     ax1.set_xlabel("Width")
     ax1.grid()
 
     ax2 = plt.subplot(gs[1, :])
-    ax2.boxplot(ratios_num_params, labels=[format_num_params(num) for num in param_nums])
+    if plot_type == "boxplot":
+        ax2.boxplot(ratios_num_params, labels=[format_num_params(num) for num in param_nums])
+    elif plot_type == "violinplot":
+        ax2.violinplot(ratios_num_params)
+        ax2.set_xticks(np.arange(1, len(param_nums)+1))
+        ax2.set_xticklabels([format_num_params(num) for num in param_nums])
     ax2.set_xlabel("#params")
     ax2.set_ylabel(f"{to_plot}-{direction}: M_0.0 / M_{initial_backward_prob}")
     ax2.grid()
-    
 
     plt.tight_layout()
     if show:
         plt.show()
     else:
-        plt.savefig(f"results/images/boxplot_ratio_by_num_params_{to_plot}_{plot_over}.png", dpi=300)
+        plt.savefig(f"results/images/{plot_type}_ratio_by_num_params_{to_plot}_{plot_over}.png", dpi=300)
     close_plt()
 
 
@@ -640,6 +654,7 @@ if __name__ == "__main__":
         adjust_backward_prob=False,
         to_plot="val_losses",
         direction="fw",
-        plot_over="epoch",
+        plot_over="epoch_unique_token",
         show=True,
+        plot_type="boxplot",
     )
