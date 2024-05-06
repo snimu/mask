@@ -410,15 +410,15 @@ def get_ratio(
         to_plot: str,
         plot_over: str,
         **settings,
-) -> tuple[np.ndarray, np.ndarray]:
-    xs_fw, _, avg_ys_fw = load_xs_ys_avg_y(
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    xs_fw, ys_fw, avg_ys_fw = load_xs_ys_avg_y(
         file,
         mask="forward",
         to_plot=to_plot,
         plot_over=plot_over,
         **settings,
     )
-    xs_bw, _, avg_ys_bw = load_xs_ys_avg_y(
+    xs_bw, ys_bw, avg_ys_bw = load_xs_ys_avg_y(
         file,
         mask="bidirectional",
         initial_backward_prob=initial_backward_prob,
@@ -432,10 +432,16 @@ def get_ratio(
     chosen_xs = min([xs_fw, xs_bw], key=lambda xs: max(xs))  
     avg_ys_fw = np.interp(chosen_xs, xs_fw, avg_ys_fw)
     avg_ys_bw = np.interp(chosen_xs, xs_bw, avg_ys_bw)
+    ys_fw_ = np.empty((len(ys_fw), len(chosen_xs)))
+    ys_bw_ = np.empty((len(ys_bw), len(chosen_xs)))
+    for i in range(len(ys_fw)):
+        ys_fw_[i] = np.interp(chosen_xs, xs_fw, ys_fw[i])
+        ys_bw_[i] = np.interp(chosen_xs, xs_bw, ys_bw[i])
 
-    fw_bw_ratio = avg_ys_fw / avg_ys_bw
+    avg_fw_bw_ratio = avg_ys_fw / avg_ys_bw
+    fw_bw_ratios = ys_fw_ / ys_bw_
 
-    return chosen_xs, fw_bw_ratio
+    return chosen_xs, fw_bw_ratios, avg_fw_bw_ratio
 
 
 def unique_num_params(file: str) -> list[int]:
@@ -534,6 +540,8 @@ def plot_ratio_over_num_params(
         direction: Literal["fw", "bw"] = "fw",
         show: bool = True,
         plot_type: Literal["boxplot", "violinplot"] = "boxplot",
+        from_x_val: int | float = 0,
+        to_x_val: int | float | None = None,
 ) -> None:
     param_nums = unique_num_params(file)
     widths = unique_widths(file)
@@ -541,7 +549,7 @@ def plot_ratio_over_num_params(
     
     ratios_num_params = []
     for num_params in param_nums:
-        _, fw_bw_ratio = get_ratio(
+        x_vals, fw_bw_ratios, _ = get_ratio(
             file, 
             to_plot=f"{to_plot}_{direction}", 
             plot_over=plot_over,
@@ -549,11 +557,13 @@ def plot_ratio_over_num_params(
             adjust_backward_prob=adjust_backward_prob,
             num_params=num_params, 
         )
-        ratios_num_params.append(fw_bw_ratio.tolist())
+        from_idx = np.where(x_vals >= from_x_val)[0][0]
+        to_idx = None if to_x_val is None else np.where(x_vals <= to_x_val)[0][-1]
+        ratios_num_params.append(fw_bw_ratios[:, from_idx:to_idx].flatten().tolist())
 
     ratios_widths = []
     for width in widths:
-        _, fw_bw_ratio = get_ratio(
+        _, fw_bw_ratios, _ = get_ratio(
             file, 
             to_plot=f"{to_plot}_{direction}", 
             plot_over=plot_over,
@@ -561,11 +571,13 @@ def plot_ratio_over_num_params(
             adjust_backward_prob=adjust_backward_prob,
             width=width, 
         )
-        ratios_widths.append(fw_bw_ratio.tolist())
+        from_idx = np.where(x_vals >= from_x_val)[0][0]
+        to_idx = None if to_x_val is None else np.where(x_vals <= to_x_val)[0][-1]
+        ratios_widths.append(fw_bw_ratios[:, from_idx:to_idx].flatten().tolist())
 
     ratios_depths = []
     for depth in depths:
-        _, fw_bw_ratio = get_ratio(
+        _, fw_bw_ratios, _ = get_ratio(
             file, 
             to_plot=f"{to_plot}_{direction}", 
             plot_over=plot_over,
@@ -573,7 +585,9 @@ def plot_ratio_over_num_params(
             adjust_backward_prob=adjust_backward_prob,
             depth=depth, 
         )
-        ratios_depths.append(fw_bw_ratio.tolist())
+        from_idx = np.where(x_vals >= from_x_val)[0][0]
+        to_idx = None if to_x_val is None else np.where(x_vals <= to_x_val)[0][-1]
+        ratios_depths.append(fw_bw_ratios[:, from_idx:to_idx].flatten().tolist())
 
     plt.figure(figsize=(10, 8))
     gs = gridspec.GridSpec(2, 2)
@@ -654,7 +668,9 @@ if __name__ == "__main__":
         adjust_backward_prob=False,
         to_plot="val_losses",
         direction="fw",
-        plot_over="epoch_unique_token",
+        plot_over="epoch",
         show=True,
         plot_type="boxplot",
+        from_x_val=5,
+        to_x_val=10,
     )
