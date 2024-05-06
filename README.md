@@ -6,14 +6,12 @@ I can see three potential benefits from this:
 
 1. Forcing the model to learn to distinguish between a fw and bw causal mask, and adjust properly, 
     may serve as a form of dataset augmentation that effectively increases the data diversity
-    (spoiler: it doesn't, at least not in my preliminary experiments)
 2. If your limiting factor for computation is data ingestion (like I've read it is for Cerebras, for example),
     injesting the data once, then calculating the loss on both the fw and bw mask could lead to higher 
-    utilization of your accelerator (spoiler: predicting bw is so much easier than fw that 
-    a $p_{bw}$ of 10% already decreases fw performance, so this is not worth it)
+    utilization of your accelerator
 3. A ColBERT replacement. That uses BERT-style masking, but the best open models use forward masking.
     I thought it might make sense to enable those powerful models to also do the bw masking necessary to take,
-    for example, footnotes into account (spoiler: I haven't tried this)
+    for example, footnotes into account
 
 All in all, these experiments are mostly a failure, but I'm going to document the results here anyways.
 
@@ -25,7 +23,7 @@ also predict using a bw mask on the same tokens (with the labels shifted etc., o
 I accumulate the losses and then do a backward pass.
 
 I do this for different model sizes (specifically, I control both the depth and width of the model),
-and to values of p_bw: 0.1 and 0.05 (in early testing, higher probabilities made the bw prediction too easy).
+and to values of $p_{bw}$: 0.1 and 0.05 (in early testing, higher probabilities made the bw prediction too easy).
 
 After a model is trained for 10 epochs, I remove the transformer layers one by one, starting from the back,
 and evaluate the resulting model after each removal. I hope that this gives me some insights into
@@ -38,6 +36,18 @@ Per setting (depth, width, $p_bw$, or using fw mask only), I train three times.
 I've saved all results, but below, will only show you the average over all three runs for each setting.
 
 ## Results
+
+Let's quickly work through points 2 and 3:
+
+- Point 2: Fixing data ingestion issues (if they are even a real thing) isn't going to happen this way.
+    $M_{0.1}$ is already much worse than $M_{0.0}$, so backward masking at a significant level is undesireable.
+- Point 3: Post-training models to serve as late-interaction RAG models may or may not work;
+    I haven't tried yet (I'm doing this in my freetime with my own money, of which I only have limited amounts).
+    Maybe I will try next month, maybe not
+
+With that out of the way, I will now write about point 1, improving performance given a constant number of training tokens.
+
+TODO: get more out of the data you have???
 
 
 
