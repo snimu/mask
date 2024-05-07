@@ -297,6 +297,30 @@ def plot_fw_bw(
     plt.tight_layout()
     if show:
         plt.show()
+    else:
+        variable_settings = ""
+        fixed_settings = ""
+        if mask is None:
+            variable_settings += "_mask"
+        else:
+            fixed_settings += f"_{mask=}"
+        if initial_backward_prob is None:
+            variable_settings += "_initial_backward_prob"
+        else:
+            fixed_settings += f"_{initial_backward_prob=}"
+        if depth is None:
+            variable_settings += "_depth"
+        else:
+            fixed_settings += f"_{depth=}"
+        if width is None:
+            variable_settings += "_width"
+        else:
+            fixed_settings += f"_{width=}"
+
+        fixed_settings += f"{'_fw_only' if fw_only else ''}{'_loglog' if loglog else ''}{'_allcurves' if plot_all else ''}"
+
+        savefile = "fw_bw" + variable_settings + fixed_settings + ".png"
+        plt.savefig(savefile, dpi=300)
     close_plt()
 
 
@@ -636,23 +660,23 @@ def plot_ratio_over_num_params(
 if __name__ == "__main__":
     # file = "results/results_scaling_fw_bw.csv"
     file = "results/results_scaling_with_special_tokens_fw_bw.csv"
-    # plot_fw_bw(
-    #     file=file,
-    #     to_plot="val_losses",
-    #     plot_over="epoch",
-    #     mask=None,
-    #     adjust_backward_prob=False,
-    #     initial_backward_prob=0.05,
-    #     depth=32,
-    #     width=None,
-    #     fw_only=True,
-    #     show=True,
-    #     loglog=False,
-    # )
+    plot_fw_bw(
+        file=file,
+        to_plot="val_losses",
+        plot_over="epoch",
+        mask=None,
+        adjust_backward_prob=False,
+        initial_backward_prob=0.05,
+        depth=32,
+        width=None,
+        fw_only=True,
+        show=True,
+        loglog=False,
+    )
     # plot_perf_forward_by_perf_bideirectional_over_num_params(
     #     file=file,
     #     initial_backward_prob=0.05,
-    #     adjust_bakward_prob=False,
+    #     adjust_backward_prob=False,
     #     moving_avg_window_size=5,
     # )
     # plot_heatmap_depth_width_perf_forward_by_perf_bidirectional(
@@ -662,15 +686,15 @@ if __name__ == "__main__":
     #     to_plot="val_losses",
     #     plot_over="epoch",
     # )
-    plot_ratio_over_num_params(
-        file=file,
-        initial_backward_prob=0.05,
-        adjust_backward_prob=False,
-        to_plot="val_losses",
-        direction="fw",
-        plot_over="epoch",
-        show=True,
-        plot_type="boxplot",
-        from_x_val=5,
-        to_x_val=10,
-    )
+    # plot_ratio_over_num_params(
+    #     file=file,
+    #     initial_backward_prob=0.05,
+    #     adjust_backward_prob=False,
+    #     to_plot="val_losses",
+    #     direction="fw",
+    #     plot_over="epoch",
+    #     show=True,
+    #     plot_type="boxplot",
+    #     from_x_val=5,
+    #     to_x_val=10,
+    # )
