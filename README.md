@@ -47,7 +47,31 @@ Let's quickly work through points 2 and 3:
 
 With that out of the way, I will now write about point 1, improving performance given a constant number of training tokens.
 
-TODO: get more out of the data you have???
+### Background info
+
+First, a caveat: I always used both a fw- and a bw-mask for the same tokens, whenever I did use a bw-mask.
+I think that it's possible that the models would perform better if the fw- and bw-mask were exclusive,
+but I went into the experiments with point 2 (data ingestion) in mind and finished those experiments.
+I may do those other experiments at some point, if my budget allows it.
+
+Unless specifically stated otherwise, $p_{bw} = 5\%$ for all of them, because with $p_{bw} = 10\%$,
+the relative performance between models trained with the fw-mask only and those trained with a bidirectional mask
+was very skewed towards the fw-only models.
+
+### Metrics
+
+- **val_loss**: The validation loss in fw- and bw-direction.
+- **ratio**: The models trained with $p_{bw} > 0\%$ are obviously better at the bw prediction
+    than the ones trained with $p_{bw} = 0\%$.
+    What I'm interested in here is how a non-zero $p_{bw}$ impacts the fw performance of the models.
+    The *ratio* is the performance for $p_{bw} = 0\%$ divided by the performance for $p_{bw} = x\%$,
+    where $x$ is usually $5$, and the performance is usually just measured by the validation loss.
+
+I have captured other metrics as well, such as the accuracy and perplexity, for both training and validation,
+but those two are the main ones I will present.
+
+### Performance for different widths
+
 
 
 
