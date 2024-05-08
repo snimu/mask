@@ -276,7 +276,7 @@ def plot_fw_bw(
             ).collect()["num_params"][0]
             
             label = (
-                f"mask={mask_}, {direction}, p_bw=({initial_backward_prob_}), "
+                f"{direction}-perf, p_bw=({initial_backward_prob_}), "
                 f"depth={depth_}, width={width_}, #params={format_num_params(num_params)}"
                 f"{' (adjusted)' if adjust_backward_prob_ else ''}"
             )
@@ -320,7 +320,7 @@ def plot_fw_bw(
         fixed_settings += f"{'_fw_only' if fw_only else ''}{'_loglog' if loglog else ''}{'_allcurves' if plot_all else ''}"
 
         savefile = "fw_bw" + variable_settings + fixed_settings + ".png"
-        plt.savefig(savefile, dpi=300)
+        plt.savefig(f"results/images/{savefile}", dpi=300)
     close_plt()
 
 
@@ -653,26 +653,27 @@ def plot_ratio_over_num_params(
     if show:
         plt.show()
     else:
-        plt.savefig(f"results/images/{plot_type}_ratio_by_num_params_{to_plot}_{plot_over}.png", dpi=300)
+        plt.savefig(f"results/images/{plot_type}_ratio_by_num_params_{to_plot}_{plot_over}_start_{from_x_val}_stop_{to_x_val}.png", dpi=300)
     close_plt()
 
 
 if __name__ == "__main__":
     # file = "results/results_scaling_fw_bw.csv"
     file = "results/results_scaling_with_special_tokens_fw_bw.csv"
-    plot_fw_bw(
-        file=file,
-        to_plot="val_losses",
-        plot_over="epoch",
-        mask=None,
-        adjust_backward_prob=False,
-        initial_backward_prob=0.05,
-        depth=32,
-        width=None,
-        fw_only=True,
-        show=True,
-        loglog=False,
-    )
+    # plot_fw_bw(
+    #     file=file,
+    #     to_plot="val_losses",
+    #     plot_over="epoch",
+    #     mask=None,
+    #     adjust_backward_prob=False,
+    #     initial_backward_prob=0.05,
+    #     depth=32,
+    #     width=None,
+    #     fw_only=True,
+    #     show=True,
+    #     loglog=False,
+    #     plot_all=False,
+    # )
     # plot_perf_forward_by_perf_bideirectional_over_num_params(
     #     file=file,
     #     initial_backward_prob=0.05,
@@ -686,15 +687,15 @@ if __name__ == "__main__":
     #     to_plot="val_losses",
     #     plot_over="epoch",
     # )
-    # plot_ratio_over_num_params(
-    #     file=file,
-    #     initial_backward_prob=0.05,
-    #     adjust_backward_prob=False,
-    #     to_plot="val_losses",
-    #     direction="fw",
-    #     plot_over="epoch",
-    #     show=True,
-    #     plot_type="boxplot",
-    #     from_x_val=5,
-    #     to_x_val=10,
-    # )
+    plot_ratio_over_num_params(
+        file=file,
+        initial_backward_prob=0.05,
+        adjust_backward_prob=False,
+        to_plot="val_losses",
+        direction="fw",
+        plot_over="epoch",
+        show=False,
+        plot_type="violinplot",
+        # from_x_val=5,
+        # to_x_val=10,
+    )
