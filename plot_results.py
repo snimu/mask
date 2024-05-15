@@ -657,6 +657,92 @@ def plot_ratio_over_num_params(
     close_plt()
 
 
+def plot_fw_vs_bw_perf_with_bidirectional_mask_over_number_of_layer_cut(
+        file: str,
+        initial_backward_prob: float,
+        adjust_backward_prob: bool = False,
+        to_plot: Literal[
+            "n_layers_removed", 
+            "cut_accs", 
+            "cut_losses", 
+            "cut_pplxs", 
+        ] = "cut_losses",
+        show: bool = True,
+) -> None:
+    import matplotlib.colors as mcolors
+    param_nums = unique_num_params(file)
+    max_layers_removed = 0
+
+    # First pass to determine the maximum number of layers removed
+    for i in range(len(param_nums)):
+        df_params = (
+            pl.scan_csv(file)
+            .filter(
+                (pl.col("num_params") == param_nums[i])
+                & (pl.col("mask") == "bidirectional")
+                & (pl.col("initial_backward_prob") == initial_backward_prob)
+                & (pl.col("adjust_backward_prob") == adjust_backward_prob)
+            )
+            .select(pl.col("n_layers_removed"), pl.col(to_plot + "_fw"), pl.col(to_plot + "_bw"))
+            .collect()
+        )
+        n_layers_removed = []
+        for row in df_params.iter_rows():
+            n_layers_removed.append(ast.literal_eval(row[0]))
+
+        max_layers_removed = max(max_layers_removed, np.max(n_layers_removed))
+
+    fig, axs = plt.subplots(len(param_nums), 1, figsize=(14, 10), sharex=True)
+    bar_width = 0.95  # Set the bar width to 0.95
+    norm = mcolors.Normalize(vmin=0.5, vmax=2)  # Normalize for the color map
+    cmap = plt.cm.RdYlGn  # Red-Yellow-Green colormap
+
+    for i in range(len(param_nums)):
+        df_params = (
+            pl.scan_csv(file)
+            .filter(
+                (pl.col("num_params") == param_nums[i])
+                & (pl.col("mask") == "bidirectional")
+                & (pl.col("initial_backward_prob") == initial_backward_prob)
+                & (pl.col("adjust_backward_prob") == adjust_backward_prob)
+            )
+            .select(pl.col("n_layers_removed"), pl.col(to_plot + "_fw"), pl.col(to_plot + "_bw"))
+            .collect()
+        )
+        n_layers_removed = []
+        fw = []
+        bw = []
+        for row in df_params.iter_rows():
+            n_layers_removed.append(ast.literal_eval(row[0]))
+            fw.append(ast.literal_eval(row[1]))
+            bw.append(ast.literal_eval(row[2]))
+
+        n_layers_removed = np.array(n_layers_removed).mean(axis=0)
+        fw = np.array(fw).mean(axis=0)
+        bw = np.array(bw).mean(axis=0)
+
+        ratios = fw / bw
+        colors = [cmap(norm(ratio)) for ratio in ratios]
+
+        for j in range(len(colors)):
+            axs[i].bar(n_layers_removed[j] - bar_width / 2, 1, width=bar_width, color=colors[j], align='center')
+
+        axs[i].set_title(f"{format_num_params(param_nums[i])} parameters")
+
+    plt.subplots_adjust(hspace=0.5)  # Increase the distance between the axes
+    plt.tight_layout()
+
+    # Add a colorbar
+    sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+    sm.set_array([])
+    cbar = plt.colorbar(sm, ax=axs, orientation='horizontal', pad=0.01, aspect=50)
+    cbar.set_label('fw/bw loss ratio')
+
+    if show:
+        plt.show()
+    close_plt()
+
+
 if __name__ == "__main__":
     # file = "results/results_scaling_fw_bw.csv"
     file = "results/results_scaling_with_special_tokens_fw_bw.csv"
@@ -687,15 +773,22 @@ if __name__ == "__main__":
     #     to_plot="val_losses",
     #     plot_over="epoch",
     # )
-    plot_ratio_over_num_params(
+    # plot_ratio_over_num_params(
+    #     file=file,
+    #     initial_backward_prob=0.05,
+    #     adjust_backward_prob=False,
+    #     to_plot="val_losses",
+    #     direction="fw",
+    #     plot_over="epoch",
+    #     show=False,
+    #     plot_type="violinplot",
+    #     # from_x_val=5,
+    #     # to_x_val=10,
+    # )
+    plot_fw_vs_bw_perf_with_bidirectional_mask_over_number_of_layer_cut(
         file=file,
         initial_backward_prob=0.05,
         adjust_backward_prob=False,
-        to_plot="val_losses",
-        direction="fw",
-        plot_over="epoch",
-        show=False,
-        plot_type="violinplot",
-        # from_x_val=5,
-        # to_x_val=10,
+        to_plot="cut_losses",
+        show=True,
     )
