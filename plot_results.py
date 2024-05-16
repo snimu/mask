@@ -5,6 +5,7 @@ from typing import Literal
 import colorsys
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
+from matplotlib import gridspec
 import math
 import polars as pl
 import pandas as pd
@@ -553,6 +554,108 @@ def plot_perf_forward_by_perf_bideirectional_over_num_params(
     plt.tight_layout()
     if show:
         plt.show()
+    close_plt()
+
+
+def plot_ratio_over_num_params(
+        file: str,
+        initial_backward_prob: float,
+        adjust_backward_prob: bool,
+        to_plot: Literal["val_losses", "train_losses", "val_accs", "train_accs", "val_pplxs"] = "val_losses",
+        plot_over: Literal["step", "epoch", "epoch_unique_token", "token", "time_sec"] = "epoch",
+        direction: Literal["fw", "bw"] = "fw",
+        show: bool = True,
+        plot_type: Literal["boxplot", "violinplot"] = "boxplot",
+        from_x_val: int | float = 0,
+        to_x_val: int | float | None = None,
+) -> None:
+    param_nums = unique_num_params(file)
+    widths = unique_widths(file)
+    depths = unique_depths(file)
+
+    ratios_num_params = []
+    for num_params in param_nums:
+        x_vals, fw_bw_ratios, _ = get_ratio(
+            file, 
+            to_plot=f"{to_plot}_{direction}", 
+            plot_over=plot_over,
+            initial_backward_prob=initial_backward_prob,
+            adjust_backward_prob=adjust_backward_prob,
+            num_params=num_params, 
+        )
+        from_idx = np.where(x_vals >= from_x_val)[0][0]
+        to_idx = None if to_x_val is None else np.where(x_vals <= to_x_val)[0][-1]
+        ratios_num_params.append(fw_bw_ratios[:, from_idx:to_idx].flatten().tolist())
+
+    ratios_widths = []
+    for width in widths:
+        _, fw_bw_ratios, _ = get_ratio(
+            file, 
+            to_plot=f"{to_plot}_{direction}", 
+            plot_over=plot_over,
+            initial_backward_prob=initial_backward_prob,
+            adjust_backward_prob=adjust_backward_prob,
+            width=width, 
+        )
+        from_idx = np.where(x_vals >= from_x_val)[0][0]
+        to_idx = None if to_x_val is None else np.where(x_vals <= to_x_val)[0][-1]
+        ratios_widths.append(fw_bw_ratios[:, from_idx:to_idx].flatten().tolist())
+
+    ratios_depths = []
+    for depth in depths:
+        _, fw_bw_ratios, _ = get_ratio(
+            file, 
+            to_plot=f"{to_plot}_{direction}", 
+            plot_over=plot_over,
+            initial_backward_prob=initial_backward_prob,
+            adjust_backward_prob=adjust_backward_prob,
+            depth=depth, 
+        )
+        from_idx = np.where(x_vals >= from_x_val)[0][0]
+        to_idx = None if to_x_val is None else np.where(x_vals <= to_x_val)[0][-1]
+        ratios_depths.append(fw_bw_ratios[:, from_idx:to_idx].flatten().tolist())
+
+    plt.figure(figsize=(10, 8))
+    gs = gridspec.GridSpec(2, 2)
+    # plt.title(f"{to_plot}_{direction}: ratio forward mask to bidirectional mask by size")
+
+    ax0 = plt.subplot(gs[0, 0])
+    if plot_type == "boxplot":
+        ax0.boxplot(ratios_depths, labels=depths)
+    elif plot_type == "violinplot":
+        ax0.violinplot(ratios_depths)
+        ax0.set_xticks(np.arange(1, len(depths)+1))
+        ax0.set_xticklabels(depths)
+    ax0.set_xlabel("Depth")
+    ax0.set_ylabel(f"{to_plot}_{direction}: M_0.0 / M_{initial_backward_prob}")
+    ax0.grid()
+
+    ax1 = plt.subplot(gs[0, 1])
+    if plot_type == "boxplot":
+        ax1.boxplot(ratios_widths, labels=widths)
+    elif plot_type == "violinplot":
+        ax1.violinplot(ratios_widths)
+        ax1.set_xticks(np.arange(1, len(widths)+1))
+        ax1.set_xticklabels(widths)
+    ax1.set_xlabel("Width")
+    ax1.grid()
+
+    ax2 = plt.subplot(gs[1, :])
+    if plot_type == "boxplot":
+        ax2.boxplot(ratios_num_params, labels=[format_num_params(num) for num in param_nums])
+    elif plot_type == "violinplot":
+        ax2.violinplot(ratios_num_params)
+        ax2.set_xticks(np.arange(1, len(param_nums)+1))
+        ax2.set_xticklabels([format_num_params(num) for num in param_nums])
+    ax2.set_xlabel("#params")
+    ax2.set_ylabel(f"{to_plot}-{direction}: M_0.0 / M_{initial_backward_prob}")
+    ax2.grid()
+
+    plt.tight_layout()
+    if show:
+        plt.show()
+    else:
+        plt.savefig(f"results/images/{plot_type}_ratio_by_num_params_{to_plot}_{plot_over}_start_{from_x_val}_stop_{to_x_val}.png", dpi=300)
     close_plt()
 
 
