@@ -627,7 +627,7 @@ def plot_ratio_over_num_params(
         ax0.set_xticks(np.arange(1, len(depths)+1))
         ax0.set_xticklabels(depths)
     ax0.set_xlabel("Depth")
-    ax0.set_ylabel(f"{to_plot}_{direction}: M_0.0 / M_{initial_backward_prob}")
+    ax0.set_ylabel(f"{to_plot}_{direction}: p_bw=0.0 / p_bw={initial_backward_prob}")
     ax0.grid()
 
     ax1 = plt.subplot(gs[0, 1])
@@ -648,7 +648,7 @@ def plot_ratio_over_num_params(
         ax2.set_xticks(np.arange(1, len(param_nums)+1))
         ax2.set_xticklabels([format_num_params(num) for num in param_nums])
     ax2.set_xlabel("#params")
-    ax2.set_ylabel(f"{to_plot}-{direction}: M_0.0 / M_{initial_backward_prob}")
+    ax2.set_ylabel(f"{to_plot}-{direction}: p_bw=0.0 / p_bw={initial_backward_prob}")
     ax2.grid()
 
     plt.tight_layout()
@@ -790,22 +790,22 @@ if __name__ == "__main__":
     #     to_plot="val_losses",
     #     plot_over="epoch",
     # )
-    # plot_ratio_over_num_params(
-    #     file=file,
-    #     initial_backward_prob=0.05,
-    #     adjust_backward_prob=False,
-    #     to_plot="val_losses",
-    #     direction="fw",
-    #     plot_over="epoch",
-    #     show=False,
-    #     plot_type="violinplot",
-    #     # from_x_val=5,
-    #     # to_x_val=10,
-    # )
-    plot_fw_vs_bw_perf_with_bidirectional_mask_over_number_of_layer_remaining(
+    plot_ratio_over_num_params(
         file=file,
         initial_backward_prob=0.05,
         adjust_backward_prob=False,
-        to_plot="cut_accs",
+        to_plot="val_losses",
+        direction="fw",
+        plot_over="epoch",
         show=False,
+        plot_type="violinplot",
+        # from_x_val=5,
+        # to_x_val=10,
     )
+    # plot_fw_vs_bw_perf_with_bidirectional_mask_over_number_of_layer_remaining(
+    #     file=file,
+    #     initial_backward_prob=0.05,
+    #     adjust_backward_prob=False,
+    #     to_plot="cut_accs",
+    #     show=False,
+    # )
