@@ -4,7 +4,8 @@ from typing import Literal
 
 import colorsys
 import matplotlib.pyplot as plt
-from matplotlib import gridspec
+import matplotlib.colors as mcolors
+import math
 import polars as pl
 import pandas as pd
 import seaborn as sns
@@ -555,148 +556,32 @@ def plot_perf_forward_by_perf_bideirectional_over_num_params(
     close_plt()
 
 
-def plot_ratio_over_num_params(
-        file: str,
-        initial_backward_prob: float,
-        adjust_backward_prob: bool,
-        to_plot: Literal["val_losses", "train_losses", "val_accs", "train_accs", "val_pplxs"] = "val_losses",
-        plot_over: Literal["step", "epoch", "epoch_unique_token", "token", "time_sec"] = "epoch",
-        direction: Literal["fw", "bw"] = "fw",
-        show: bool = True,
-        plot_type: Literal["boxplot", "violinplot"] = "boxplot",
-        from_x_val: int | float = 0,
-        to_x_val: int | float | None = None,
-) -> None:
-    param_nums = unique_num_params(file)
-    widths = unique_widths(file)
-    depths = unique_depths(file)
-    
-    ratios_num_params = []
-    for num_params in param_nums:
-        x_vals, fw_bw_ratios, _ = get_ratio(
-            file, 
-            to_plot=f"{to_plot}_{direction}", 
-            plot_over=plot_over,
-            initial_backward_prob=initial_backward_prob,
-            adjust_backward_prob=adjust_backward_prob,
-            num_params=num_params, 
-        )
-        from_idx = np.where(x_vals >= from_x_val)[0][0]
-        to_idx = None if to_x_val is None else np.where(x_vals <= to_x_val)[0][-1]
-        ratios_num_params.append(fw_bw_ratios[:, from_idx:to_idx].flatten().tolist())
+def get_contrasting_text_color(background_color):
+    """Determine whether white or black text would have more contrast against the background color."""
+    r, g, b, _ = background_color
+    brightness = (r * 333 + g * 333 + (math.sqrt(r*g) * 333)) / 1000
+    return 'white' if brightness < 0.75 else 'black'  # Adjust the threshold for more white text
 
-    ratios_widths = []
-    for width in widths:
-        _, fw_bw_ratios, _ = get_ratio(
-            file, 
-            to_plot=f"{to_plot}_{direction}", 
-            plot_over=plot_over,
-            initial_backward_prob=initial_backward_prob,
-            adjust_backward_prob=adjust_backward_prob,
-            width=width, 
-        )
-        from_idx = np.where(x_vals >= from_x_val)[0][0]
-        to_idx = None if to_x_val is None else np.where(x_vals <= to_x_val)[0][-1]
-        ratios_widths.append(fw_bw_ratios[:, from_idx:to_idx].flatten().tolist())
-
-    ratios_depths = []
-    for depth in depths:
-        _, fw_bw_ratios, _ = get_ratio(
-            file, 
-            to_plot=f"{to_plot}_{direction}", 
-            plot_over=plot_over,
-            initial_backward_prob=initial_backward_prob,
-            adjust_backward_prob=adjust_backward_prob,
-            depth=depth, 
-        )
-        from_idx = np.where(x_vals >= from_x_val)[0][0]
-        to_idx = None if to_x_val is None else np.where(x_vals <= to_x_val)[0][-1]
-        ratios_depths.append(fw_bw_ratios[:, from_idx:to_idx].flatten().tolist())
-
-    plt.figure(figsize=(10, 8))
-    gs = gridspec.GridSpec(2, 2)
-    # plt.title(f"{to_plot}_{direction}: ratio forward mask to bidirectional mask by size")
-
-    ax0 = plt.subplot(gs[0, 0])
-    if plot_type == "boxplot":
-        ax0.boxplot(ratios_depths, labels=depths)
-    elif plot_type == "violinplot":
-        ax0.violinplot(ratios_depths)
-        ax0.set_xticks(np.arange(1, len(depths)+1))
-        ax0.set_xticklabels(depths)
-    ax0.set_xlabel("Depth")
-    ax0.set_ylabel(f"{to_plot}_{direction}: M_0.0 / M_{initial_backward_prob}")
-    ax0.grid()
-
-    ax1 = plt.subplot(gs[0, 1])
-    if plot_type == "boxplot":
-        ax1.boxplot(ratios_widths, labels=widths)
-    elif plot_type == "violinplot":
-        ax1.violinplot(ratios_widths)
-        ax1.set_xticks(np.arange(1, len(widths)+1))
-        ax1.set_xticklabels(widths)
-    ax1.set_xlabel("Width")
-    ax1.grid()
-
-    ax2 = plt.subplot(gs[1, :])
-    if plot_type == "boxplot":
-        ax2.boxplot(ratios_num_params, labels=[format_num_params(num) for num in param_nums])
-    elif plot_type == "violinplot":
-        ax2.violinplot(ratios_num_params)
-        ax2.set_xticks(np.arange(1, len(param_nums)+1))
-        ax2.set_xticklabels([format_num_params(num) for num in param_nums])
-    ax2.set_xlabel("#params")
-    ax2.set_ylabel(f"{to_plot}-{direction}: M_0.0 / M_{initial_backward_prob}")
-    ax2.grid()
-
-    plt.tight_layout()
-    if show:
-        plt.show()
-    else:
-        plt.savefig(f"results/images/{plot_type}_ratio_by_num_params_{to_plot}_{plot_over}_start_{from_x_val}_stop_{to_x_val}.png", dpi=300)
-    close_plt()
-
-
-def plot_fw_vs_bw_perf_with_bidirectional_mask_over_number_of_layer_cut(
+def plot_fw_vs_bw_perf_with_bidirectional_mask_over_number_of_layer_remaining(
         file: str,
         initial_backward_prob: float,
         adjust_backward_prob: bool = False,
         to_plot: Literal[
-            "n_layers_removed", 
             "cut_accs", 
             "cut_losses", 
             "cut_pplxs", 
         ] = "cut_losses",
         show: bool = True,
 ) -> None:
-    import matplotlib.colors as mcolors
     param_nums = unique_num_params(file)
-    max_layers_removed = 0
 
-    # First pass to determine the maximum number of layers removed
-    for i in range(len(param_nums)):
-        df_params = (
-            pl.scan_csv(file)
-            .filter(
-                (pl.col("num_params") == param_nums[i])
-                & (pl.col("mask") == "bidirectional")
-                & (pl.col("initial_backward_prob") == initial_backward_prob)
-                & (pl.col("adjust_backward_prob") == adjust_backward_prob)
-            )
-            .select(pl.col("n_layers_removed"), pl.col(to_plot + "_fw"), pl.col(to_plot + "_bw"))
-            .collect()
-        )
-        n_layers_removed = []
-        for row in df_params.iter_rows():
-            n_layers_removed.append(ast.literal_eval(row[0]))
-
-        max_layers_removed = max(max_layers_removed, np.max(n_layers_removed))
-
-    fig, axs = plt.subplots(len(param_nums), 1, figsize=(14, 10), sharex=True)
+    fig, axs = plt.subplots(len(param_nums), 1, figsize=(12, 8), sharex=True)
     bar_width = 0.95  # Set the bar width to 0.95
     norm = mcolors.Normalize(vmin=0.5, vmax=2)  # Normalize for the color map
     cmap = plt.cm.RdYlGn  # Red-Yellow-Green colormap
 
+    metric_for_final_layer = "val_" + to_plot.split("_")[1]
+
     for i in range(len(param_nums)):
         df_params = (
             pl.scan_csv(file)
@@ -706,40 +591,69 @@ def plot_fw_vs_bw_perf_with_bidirectional_mask_over_number_of_layer_cut(
                 & (pl.col("initial_backward_prob") == initial_backward_prob)
                 & (pl.col("adjust_backward_prob") == adjust_backward_prob)
             )
-            .select(pl.col("n_layers_removed"), pl.col(to_plot + "_fw"), pl.col(to_plot + "_bw"))
+            .select(
+                pl.col("n_layers_removed"), 
+                pl.col(to_plot + "_fw"), 
+                pl.col(to_plot + "_bw"),
+                pl.col(metric_for_final_layer + "_fw"),
+                pl.col(metric_for_final_layer + "_bw"),
+            )
             .collect()
         )
         n_layers_removed = []
         fw = []
         bw = []
         for row in df_params.iter_rows():
-            n_layers_removed.append(ast.literal_eval(row[0]))
-            fw.append(ast.literal_eval(row[1]))
-            bw.append(ast.literal_eval(row[2]))
+            # Always add the metric without removing any layers (which I stupidly didn't record under the same key)
+            n_layers_removed.append([0] + ast.literal_eval(row[0]))
+            fw.append([ast.literal_eval(row[3])[-1]] + ast.literal_eval(row[1]))
+            bw.append([ast.literal_eval(row[4])[-1]] + ast.literal_eval(row[2]))
 
         n_layers_removed = np.array(n_layers_removed).mean(axis=0)
-        fw = np.array(fw).mean(axis=0)
-        bw = np.array(bw).mean(axis=0)
+        num_layers_remaining = max(n_layers_removed) - n_layers_removed + 1  # Calculate number of layers remaining
+        fw = np.flip(np.array(fw).mean(axis=0), axis=0)  # Flip the array to match the order of the x-axis
+        bw = np.flip(np.array(bw).mean(axis=0), axis=0)  # Flip the array to match the order of the x-axis
 
         ratios = fw / bw
         colors = [cmap(norm(ratio)) for ratio in ratios]
 
         for j in range(len(colors)):
-            axs[i].bar(n_layers_removed[j] - bar_width / 2, 1, width=bar_width, color=colors[j], align='center')
+            axs[i].bar(num_layers_remaining[j], 1, width=bar_width, color=colors[j], align='center')
+            text_color = get_contrasting_text_color(colors[j])
+            axs[i].text(num_layers_remaining[j], 1, f'{ratios[j]:.1f}', ha='center', va='top', color=text_color, fontsize=10)
 
-        axs[i].set_title(f"{format_num_params(param_nums[i])} parameters")
+        axs[i].text(1.02, 0.5, format_num_params(param_nums[i]), va='center', ha='left', transform=axs[i].transAxes)
+        axs[i].tick_params(axis='y', which='both', left=False, right=False, labelleft=False)
 
-    plt.subplots_adjust(hspace=0.5)  # Increase the distance between the axes
-    plt.tight_layout()
+        # Adjust x-axis limits dynamically
+        axs[i].set_xlim(0.5, max(num_layers_remaining) + 0.5)
+
+    plt.subplots_adjust(hspace=0.5, left=0.03, right=0.9, bottom=0.25, top=0.85)  # Adjust the layout
 
     # Add a colorbar
+    norm = mcolors.Normalize(vmin=0, vmax=2)  # Normalize for the color map from 0 to 2
     sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
     sm.set_array([])
-    cbar = plt.colorbar(sm, ax=axs, orientation='horizontal', pad=0.01, aspect=50)
-    cbar.set_label('fw/bw loss ratio')
+
+    # Add colorbar below the entire plot
+    cbar_ax = fig.add_axes([0.03, 0.1, 0.85, 0.03])  # [left, bottom, width, height]
+    cbar = fig.colorbar(sm, cax=cbar_ax, orientation='horizontal')
+    cbar.set_label(f'fw/bw {metric_for_final_layer} ratio')
+
+    # Label the x-axis
+    fig.text(0.5, 0.2, 'num_layers_remaining', ha='center', va='center')
+
+    # Add main title
+    fig.suptitle(f'fw/bw {metric_for_final_layer} ratio for p_bw={initial_backward_prob}', fontsize=16)
+
+    # Add label for parameter numbers above them
+    fig.text(0.94, 0.88, '#params', ha='center', va='center', fontsize=12, rotation=0)
 
     if show:
         plt.show()
+    else:
+        savefile = f"fw_vs_bw_perf_with_bidirectional_mask_over_number_of_layer_remaining_{to_plot}.png"
+        plt.savefig(f"results/images/{savefile}", dpi=300)
     close_plt()
 
 
@@ -785,10 +699,10 @@ if __name__ == "__main__":
     #     # from_x_val=5,
     #     # to_x_val=10,
     # )
-    plot_fw_vs_bw_perf_with_bidirectional_mask_over_number_of_layer_cut(
+    plot_fw_vs_bw_perf_with_bidirectional_mask_over_number_of_layer_remaining(
         file=file,
         initial_backward_prob=0.05,
         adjust_backward_prob=False,
-        to_plot="cut_losses",
-        show=True,
+        to_plot="cut_accs",
+        show=False,
     )

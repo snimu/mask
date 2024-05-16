@@ -142,6 +142,34 @@ How does that lead to the observed scaling behavior?
 ...making choice might be better...
 
 
+### Bw performance comes from late layers
+
+Let's cut away the model's layers one by one and evaluate every time.
+How does the relative performance between the fw and bw task change?
+Importantly, this is not a comparison of fw performance for two different values of $p_{bw}$ as before,
+but a comparison between fw and be performance for the same value of $p_{bw} = 5\%$.
+
+![fw- vs bw-perf for p_bw=5%](results/images/fw_vs_bw_perf_with_bidirectional_mask_over_number_of_layer_remaining_cut_accs.png)
+
+In the image above, I plot the ratio of fw- to bw-performance for models trained with $p_{bw} = 5\%$
+over the number of layers used, for different numbers of parameters.
+The numbers shown are always the average over 3 runs.
+
+A few observations:
+
+1. As the number of layers is cut more and more, the performance of the bw task compared to the fw task drops off rapidly.
+    This implies to me that the model learns the fw task, and performs that in the early layers,
+    and then somehow manages to invert it into the bw task in the later layers.
+2. In the late layers&mdash;and especially in the late layers of the fairly deep networks&mdash;we see that the bw task
+    is much easier for the model than the fw task.
+3. The change from being better at the bw than the fw task goes in a sigmoid-like fashion starting from the first third or half
+    of the model until the very end (mostly, this is just eyeballing the plots). In the shallow models, this of course looks
+    pretty sudden.
+
+To be clear, the absolute performance on both the fw and the bw task falls rapidly with every layer that is removed.
+However, as a trend, the later layers seem more important for the bw task, and the earlier layers for the fw task.
+
+
 ### Future experiments
 
 - Train an even larger model to see if we actually get a positive effect on the fw performance
