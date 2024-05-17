@@ -558,9 +558,9 @@ def compute_loss(
 
 def train(
         mask: str, 
-        num_tokens_train: int, num_tokens_val: int, 
-        num_epochs_train: int, num_epochs_val: int, 
-        num_steps_train: int, num_steps_val: int,
+        num_tokens: int, 
+        num_epochs: int, 
+        num_steps: int,
         max_epochs_between_vals: float,
         backward_prob: float,
         adjust_backward_prob: bool,
@@ -662,8 +662,10 @@ def train(
     global position_bias_base_forward, position_bias_base_backward, position_bias_base
     global causality
 
+    epoch = 0.0
+
     # Main loop. Most of the complexity here is in the dynamic growing scheduler(s).
-    while curr_step < num_steps_train:
+    while curr_step < num_steps and tokens_seen < num_tokens and epoch < num_epochs:
         sampled_sequences = get_batch(data, key='train', batchsize=curr_batchsize, length=curr_length)
 
         outputs, loss, inputs_fw, targets_fw, inputs_bw, targets_bw, loss_fw, loss_bw, tokens_seen = compute_loss(
@@ -686,10 +688,7 @@ def train(
         epoch = tokens_seen/len(data['train'])
         distinct_tokens_seen += len(inputs_fw)
 
-        do_stop = (
-            curr_step >= num_steps_val or tokens_seen >= num_tokens_val or epoch >= num_epochs_val
-            or curr_step >= num_steps_train or tokens_seen >= num_tokens_train or epoch >= num_epochs_train
-        )
+        do_stop = (curr_step >= num_steps) or (tokens_seen >= num_tokens) or (epoch >= num_epochs)
         do_eval = (
             do_stop 
             or (
@@ -785,7 +784,7 @@ def train(
 
             # Print out our training details
             ## We also check to see if we're on our final eval loop (assum that max_curr_step lines up with the eval_every value) so we can print the 'bottom' of the table for each round.
-            is_final_eval = (curr_step >= num_steps_val) # If we're at the end of training, add a line after the end of the run
+            is_final_eval = (curr_step >= num_steps) # If we're at the end of training, add a line after the end of the run
             print_training_details(format_for_table(variables_to_log, locals=locals()), is_final_entry=is_final_eval)
 
             torch.cuda.synchronize()
@@ -831,12 +830,9 @@ def get_args() -> argparse.Namespace:
     parser.add_argument("--adjust_backward_prob", type=int, nargs="+", default=0, help="If set, backward prob will be dynamically adjusted.")
     parser.add_argument("--use_extra_tokens", action="store_true", help="If set, the model will use extra tokens for the forward and backward pass.")
 
-    parser.add_argument("--num_tokens_train", type=int, default=int(1e12))
-    parser.add_argument("--num_tokens_val", type=int, default=int(1e12))
-    parser.add_argument("--num_epochs_train", type=int, default=10)
-    parser.add_argument("--num_epochs_val", type=int, default=10)
-    parser.add_argument("--num_steps_train", type=int, default=1000)
-    parser.add_argument("--num_steps_val", type=int, default=1000)
+    parser.add_argument("--num_epochs", type=int, default=10)
+    parser.add_argument("--num_steps", type=int, default=int(1e6))
+    parser.add_argument("--num_tokens", type=int, default=int(1e12))
     parser.add_argument("--max_epochs_between_vals", type=float, default=0.25)
 
 
@@ -921,12 +917,9 @@ def main() -> None:
                 backward_probs,
             ) = train(
                 mask=mask,
-                num_tokens_train=args.num_tokens_train,
-                num_tokens_val=args.num_tokens_val,
-                num_epochs_train=args.num_epochs_train,
-                num_epochs_val=args.num_epochs_val,
-                num_steps_train=args.num_steps_train,
-                num_steps_val=args.num_steps_val,
+                num_tokens=args.num_tokens,
+                num_epochs=args.num_epochs,
+                num_steps=args.num_steps,
                 max_epochs_between_vals=args.max_epochs_between_vals,
                 backward_prob=backward_prob,
                 adjust_backward_prob=adjust_backward_prob,
