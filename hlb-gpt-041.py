@@ -690,7 +690,7 @@ def train(
             curr_step >= num_steps_val or tokens_seen >= num_tokens_val or epoch >= num_epochs_val
             or curr_step >= num_steps_train or tokens_seen >= num_tokens_train or epoch >= num_epochs_train
         )
-        do_eval = do_stop or (curr_step % hyp['opt']['microbatch']['sample_every'] == 0) or (epoch_list_val and (epoch - epoch_list_val[-1] >= max_epochs_between_vals))
+        do_eval = do_stop or (curr_step % hyp['opt']['microbatch']['eval_every'] == 0 and curr_step > 0) or (epoch_list_val and (epoch - epoch_list_val[-1] >= max_epochs_between_vals))
 
         # Quick non-eval summary every N training steps, at the end of every microbatch group
         if do_eval or (curr_step % 10 == 0):
