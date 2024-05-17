@@ -862,7 +862,7 @@ def get_settings(args: argparse.Namespace) -> list:
         for bp, adjust_backward_prob in bw_settings
         if mask == "bidirectional"
     ]
-    combined_settings.extend([(ms, depth, width, mask, 0.0, False) for ms, depth, width, mask in standard_settings if mask != "bidirectional"])
+    combined_settings.extend([(ms, depth, width, num_heads, mask, 0.0, False) for ms, depth, width, num_heads, mask in standard_settings if mask != "bidirectional"])
     
     return combined_settings
 
