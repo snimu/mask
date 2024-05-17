@@ -557,9 +557,6 @@ def plot_perf_forward_by_perf_bidirectional_over_num_params(
     close_plt()
 
 
-import seaborn as sns
-import pandas as pd
-
 def plot_ratio_over_num_params(
         file: str,
         initial_backward_prob: float,
