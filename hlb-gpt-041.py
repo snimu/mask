@@ -686,6 +686,8 @@ def train(
         epoch = tokens_seen/len(data['train'])
         distinct_tokens_seen += len(inputs_fw)
 
+        do_eval = curr_step % hyp['opt']['microbatch']['sample_every'] == 0 or epoch_list_val and (epoch - epoch_list_val[-1] >= max_epochs_between_vals)
+
         # Quick non-eval summary every N training steps, at the end of every microbatch group, if we are not doing a _full eval_ here.
         if curr_step % 10 == 0 and curr_microbatch_step % discrete_sampled_microbatch_steps == 0:
             train_acc          = (outputs.detach().argmax(-1) == targets_fw).float().mean().item()
@@ -699,7 +701,7 @@ def train(
             train_accs.append(train_acc)
 
             # don't print training details if we're about to do a full eval
-            if not ((curr_step % hyp['opt']['eval_every'] == 0) or (epoch_list_val and (epoch - epoch_list_val[-1] >= max_epochs_between_vals))):
+            if not do_eval:
                 train_summary_vars = {'epoch': epoch, 'curr_step': curr_step, 'train_loss': train_loss, 'train_acc': train_acc}
                 print_training_details(format_for_table(variables_to_log, locals=train_summary_vars))
 
@@ -718,69 +720,69 @@ def train(
             if curr_step % hyp['misc']['sequence_length']['growth_steps'] == 0 and curr_step != 0 and curr_length < hyp['misc']['sequence_length']['max']:
                 curr_length, curr_batchsize = grow_sequence_length(curr_length, curr_batchsize)
 
-            # The next several lines calculate a dynamic batchsize, simulated through manual dithering
-            # There could be improvements or losses in changing the dithering strategy, since determinism and gradient descent can lead to some very not-so-nice (and subtle) loss oscillations.
-            if curr_step % hyp['opt']['microbatch']['sample_every'] == 0:
-                grad_norm = get_grad_norm(net)
+        # The next several lines calculate a dynamic batchsize, simulated through manual dithering
+        # There could be improvements or losses in changing the dithering strategy, since determinism and gradient descent can lead to some very not-so-nice (and subtle) loss oscillations.
+        if do_eval:
+            grad_norm = get_grad_norm(net)
 
-                grad_norm_per_param = grad_norm/(total_trainable_params**.5) # This should keep the expected grad norm per parameter roughly the same (ignoring initializations) unless I did my napkin math wrong (feel free to correct it and test it out if so! <3 :') )
-                grad_norm_target    = (((microbatch_grad_norm_steps_scale * (curr_step + 1e-2))) ** microbatch_expected_grad_norm_pow)
-                ratio_diff          = grad_norm_per_param/(grad_norm_target)
+            grad_norm_per_param = grad_norm/(total_trainable_params**.5) # This should keep the expected grad norm per parameter roughly the same (ignoring initializations) unless I did my napkin math wrong (feel free to correct it and test it out if so! <3 :') )
+            grad_norm_target    = (((microbatch_grad_norm_steps_scale * (curr_step + 1e-2))) ** microbatch_expected_grad_norm_pow)
+            ratio_diff          = grad_norm_per_param/(grad_norm_target)
 
-                # Update the fractional number of steps based on the % difference between the grad norm and expected grad norm.
-                microbatch_steps *= 1. + (hyp['opt']['microbatch']['sample_every'] * hyp['opt']['microbatch']['scale_lr'] * (ratio_diff - 1))
-                microbatch_steps  = max(microbatch_steps, 1e-1) # Clamp to keep this from going to zero, so that we can bounce back if needed
+            # Update the fractional number of steps based on the % difference between the grad norm and expected grad norm.
+            microbatch_steps *= 1. + (hyp['opt']['microbatch']['sample_every'] * hyp['opt']['microbatch']['scale_lr'] * (ratio_diff - 1))
+            microbatch_steps  = max(microbatch_steps, 1e-1) # Clamp to keep this from going to zero, so that we can bounce back if needed
 
-            # simple bernoulli dithering with probabilities based on how close we are to each integer
-            base, dither_prob = divmod(microbatch_steps, 1)
+        # simple bernoulli dithering with probabilities based on how close we are to each integer
+        base, dither_prob = divmod(microbatch_steps, 1)
 
-            # Randomly sample next accumulate steps to use. This is the dithered operation, the 'microbatch_steps' is the noninteger accumulator between steps.
-            discrete_sampled_microbatch_steps = max(1, int(base + torch.bernoulli(torch.tensor(dither_prob)).item())) # bernoulli via torch to save an unnecesary import :)
+        # Randomly sample next accumulate steps to use. This is the dithered operation, the 'microbatch_steps' is the noninteger accumulator between steps.
+        discrete_sampled_microbatch_steps = max(1, int(base + torch.bernoulli(torch.tensor(dither_prob)).item())) # bernoulli via torch to save an unnecesary import :)
 
-            opt.zero_grad()
+        opt.zero_grad()
 
-            # reset microbatch steps and increment current step
-            curr_microbatch_step = 0
-            curr_step += 1
+        # reset microbatch steps and increment current step
+        curr_microbatch_step = 0
+        curr_step += 1
 
-            # Since we're not running over epochs anymore, we have to manually calculate roughly what epoch it is. This is different than the standard random derangement of sampled sequences and has different pros/cons, is my understanding. :thumbsup:
-            epoch = tokens_seen/len(data['train'])
+        # Since we're not running over epochs anymore, we have to manually calculate roughly what epoch it is. This is different than the standard random derangement of sampled sequences and has different pros/cons, is my understanding. :thumbsup:
+        epoch = tokens_seen/len(data['train'])
 
-            if (curr_step % hyp['opt']['eval_every'] == 0) or (epoch_list_val and (epoch - epoch_list_val[-1] >= max_epochs_between_vals)):
-                ender.record()
-                torch.cuda.synchronize()
+        if (curr_step % hyp['opt']['eval_every'] == 0) or (epoch_list_val and (epoch - epoch_list_val[-1] >= max_epochs_between_vals)):
+            ender.record()
+            torch.cuda.synchronize()
 
-                cum_secs += 1e-3 * starter.elapsed_time(ender)
-                train_loss = loss.detach().cpu().item() # Update the loss for the training details printout
+            cum_secs += 1e-3 * starter.elapsed_time(ender)
+            train_loss = loss.detach().cpu().item() # Update the loss for the training details printout
 
-                net.eval()
-                val_acc_fw, val_loss_fw, pplx_fw, val_acc_bw, val_loss_bw, pplx_bw = eval(net, use_extra_tokens=use_extra_tokens)
-                
-                val_losses_forward.append(val_loss_fw)
-                val_accs_forward.append(val_acc_fw)
-                val_pplxs_forward.append(pplx_fw)
-                val_losses_backward.append(val_loss_bw)
-                val_accs_backward.append(val_acc_bw)
-                val_pplxs_backward.append(pplx_bw)
-                steps_list_val.append(curr_step)
-                tokens_seen_list_val.append(tokens_seen)
-                epoch_list_val.append(epoch)
-                epoch_by_distinct_tokens_seen_list_val.append(distinct_tokens_seen/len(data['train']))
-                cumulative_times_val.append(cum_secs)
+            net.eval()
+            val_acc_fw, val_loss_fw, pplx_fw, val_acc_bw, val_loss_bw, pplx_bw = eval(net, use_extra_tokens=use_extra_tokens)
+            
+            val_losses_forward.append(val_loss_fw)
+            val_accs_forward.append(val_acc_fw)
+            val_pplxs_forward.append(pplx_fw)
+            val_losses_backward.append(val_loss_bw)
+            val_accs_backward.append(val_acc_bw)
+            val_pplxs_backward.append(pplx_bw)
+            steps_list_val.append(curr_step)
+            tokens_seen_list_val.append(tokens_seen)
+            epoch_list_val.append(epoch)
+            epoch_by_distinct_tokens_seen_list_val.append(distinct_tokens_seen/len(data['train']))
+            cumulative_times_val.append(cum_secs)
 
-                # Print out our training details
-                ## We also check to see if we're on our final eval loop (assum that max_curr_step lines up with the eval_every value) so we can print the 'bottom' of the table for each round.
-                is_final_eval = (curr_step >= num_steps_val) # If we're at the end of training, add a line after the end of the run
-                print_training_details(format_for_table(variables_to_log, locals=locals()), is_final_entry=is_final_eval)
+            # Print out our training details
+            ## We also check to see if we're on our final eval loop (assum that max_curr_step lines up with the eval_every value) so we can print the 'bottom' of the table for each round.
+            is_final_eval = (curr_step >= num_steps_val) # If we're at the end of training, add a line after the end of the run
+            print_training_details(format_for_table(variables_to_log, locals=locals()), is_final_entry=is_final_eval)
 
-                if curr_step >= num_steps_val or tokens_seen >= num_tokens_val or epoch >= num_epochs_val:
-                    break
-                torch.cuda.synchronize()
-                starter.record()
-                net.train()
-
-            if curr_step >= num_steps_train or tokens_seen >= num_tokens_train or epoch >= num_epochs_train:
+            if curr_step >= num_steps_val or tokens_seen >= num_tokens_val or epoch >= num_epochs_val:
                 break
+            torch.cuda.synchronize()
+            starter.record()
+            net.train()
+
+        if curr_step >= num_steps_train or tokens_seen >= num_tokens_train or epoch >= num_epochs_train:
+            break
         curr_microbatch_step += 1
 
     return (
