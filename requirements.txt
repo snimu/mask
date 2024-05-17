@@ -5,3 +5,4 @@ seaborn
 polars
 matplotlib
 pandas
+einops
