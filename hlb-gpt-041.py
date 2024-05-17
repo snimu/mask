@@ -724,35 +724,35 @@ def train(
             if curr_step % hyp['misc']['sequence_length']['growth_steps'] == 0 and curr_step != 0 and curr_length < hyp['misc']['sequence_length']['max']:
                 curr_length, curr_batchsize = grow_sequence_length(curr_length, curr_batchsize)
 
-        # The next several lines calculate a dynamic batchsize, simulated through manual dithering
-        # There could be improvements or losses in changing the dithering strategy, since determinism and gradient descent can lead to some very not-so-nice (and subtle) loss oscillations.
+            # The next several lines calculate a dynamic batchsize, simulated through manual dithering
+            # There could be improvements or losses in changing the dithering strategy, since determinism and gradient descent can lead to some very not-so-nice (and subtle) loss oscillations.
+            if curr_step % hyp['opt']['microbatch']['sample_every'] == 0:
+                grad_norm = get_grad_norm(net)
+
+                grad_norm_per_param = grad_norm/(total_trainable_params**.5) # This should keep the expected grad norm per parameter roughly the same (ignoring initializations) unless I did my napkin math wrong (feel free to correct it and test it out if so! <3 :') )
+                grad_norm_target    = (((microbatch_grad_norm_steps_scale * (curr_step + 1e-2))) ** microbatch_expected_grad_norm_pow)
+                ratio_diff          = grad_norm_per_param/(grad_norm_target)
+
+                # Update the fractional number of steps based on the % difference between the grad norm and expected grad norm.
+                microbatch_steps *= 1. + (hyp['opt']['microbatch']['sample_every'] * hyp['opt']['microbatch']['scale_lr'] * (ratio_diff - 1))
+                microbatch_steps  = max(microbatch_steps, 1e-1) # Clamp to keep this from going to zero, so that we can bounce back if needed
+
+            # simple bernoulli dithering with probabilities based on how close we are to each integer
+            base, dither_prob = divmod(microbatch_steps, 1)
+
+            # Randomly sample next accumulate steps to use. This is the dithered operation, the 'microbatch_steps' is the noninteger accumulator between steps.
+            discrete_sampled_microbatch_steps = max(1, int(base + torch.bernoulli(torch.tensor(dither_prob)).item())) # bernoulli via torch to save an unnecesary import :)
+
+            opt.zero_grad()
+
+            # reset microbatch steps and increment current step
+            curr_microbatch_step = 0
+            curr_step += 1
+
+            # Since we're not running over epochs anymore, we have to manually calculate roughly what epoch it is. This is different than the standard random derangement of sampled sequences and has different pros/cons, is my understanding. :thumbsup:
+            epoch = tokens_seen/len(data['train'])
+
         if do_eval:
-            grad_norm = get_grad_norm(net)
-
-            grad_norm_per_param = grad_norm/(total_trainable_params**.5) # This should keep the expected grad norm per parameter roughly the same (ignoring initializations) unless I did my napkin math wrong (feel free to correct it and test it out if so! <3 :') )
-            grad_norm_target    = (((microbatch_grad_norm_steps_scale * (curr_step + 1e-2))) ** microbatch_expected_grad_norm_pow)
-            ratio_diff          = grad_norm_per_param/(grad_norm_target)
-
-            # Update the fractional number of steps based on the % difference between the grad norm and expected grad norm.
-            microbatch_steps *= 1. + (hyp['opt']['microbatch']['sample_every'] * hyp['opt']['microbatch']['scale_lr'] * (ratio_diff - 1))
-            microbatch_steps  = max(microbatch_steps, 1e-1) # Clamp to keep this from going to zero, so that we can bounce back if needed
-
-        # simple bernoulli dithering with probabilities based on how close we are to each integer
-        base, dither_prob = divmod(microbatch_steps, 1)
-
-        # Randomly sample next accumulate steps to use. This is the dithered operation, the 'microbatch_steps' is the noninteger accumulator between steps.
-        discrete_sampled_microbatch_steps = max(1, int(base + torch.bernoulli(torch.tensor(dither_prob)).item())) # bernoulli via torch to save an unnecesary import :)
-
-        opt.zero_grad()
-
-        # reset microbatch steps and increment current step
-        curr_microbatch_step = 0
-        curr_step += 1
-
-        # Since we're not running over epochs anymore, we have to manually calculate roughly what epoch it is. This is different than the standard random derangement of sampled sequences and has different pros/cons, is my understanding. :thumbsup:
-        epoch = tokens_seen/len(data['train'])
-
-        if (curr_step % hyp['opt']['eval_every'] == 0) or (epoch_list_val and (epoch - epoch_list_val[-1] >= max_epochs_between_vals)):
             ender.record()
             torch.cuda.synchronize()
 
