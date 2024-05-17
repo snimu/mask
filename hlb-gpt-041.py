@@ -693,7 +693,7 @@ def train(
         do_eval = do_stop or curr_step % hyp['opt']['microbatch']['sample_every'] == 0 or (epoch_list_val and (epoch - epoch_list_val[-1] >= max_epochs_between_vals))
 
         # Quick non-eval summary every N training steps, at the end of every microbatch group, if we are not doing a _full eval_ here.
-        if do_eval or (curr_step % 10 == 0 and curr_microbatch_step % discrete_sampled_microbatch_steps == 0):
+        if do_eval or (curr_step % 10 == 0):
             train_acc          = (outputs.detach().argmax(-1) == targets_fw).float().mean().item()
             train_loss         = loss.detach().cpu().item()
 
