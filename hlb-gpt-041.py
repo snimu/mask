@@ -18,6 +18,7 @@ import functools
 from functools import partial
 import subprocess
 
+import einops
 import zipfile
 import math
 import os
@@ -124,7 +125,7 @@ def change_model_scale(scale: float, depth: int | None = None, width: int | None
         hyp['net']['num_blocks'] = depth
 
         # Adapt model scale
-        net = make_net()
+        net = make_net(1)
         num_params = sum(p.numel() for p in net.parameters() if p.requires_grad)
         del net
         default_params = 46_009_736
@@ -213,13 +214,15 @@ batch_index_offsets = torch.arange(0, hyp['misc']['sequence_length']['max']+1, d
 
 class LatentAttentionBlock(nn.Module):
     """ Efficient fused latent-space attention block. Linear keys and queries, nonlinear values."""
-    def __init__(self, num_dim):
+    def __init__(self, num_dim, linear_value: bool, num_heads: int):
         super().__init__()
         # Layer dim parameters. Play around with these, there's likely some undiscovered stuff still!
         self.dim        = num_dim
         self.qk_dim     = self.dim//hyp['net']['qk_dim_div']
         self.v_dim      = num_dim
         self.expand_dim = num_dim * hyp['net']['expand_factor']
+        self.linear_value = linear_value 
+        self.num_heads = num_heads
 
         # Main layer weights
         self.norm    = nn.LayerNorm(self.dim, bias=False)
@@ -232,13 +235,10 @@ class LatentAttentionBlock(nn.Module):
 
     def forward(self, x):
         residual = x
-        global causality
+
         # Make additive attention mask, scaled by a learned mult for the position bias (lets us learn dynamic attention ranges per layer as needed)
-        if causality == "forward":
-            attn_mask = torch.where(causal_mask[:x.shape[1], :x.shape[1]], F.softplus(self.position_bias_mult) * position_bias_base[:x.shape[1], :x.shape[1]], negative_infinity_matrix_base[:x.shape[1], :x.shape[1]])
-        else:
-            attn_mask = torch.where(causal_mask[-x.shape[1]:, :x.shape[1]], F.softplus(self.position_bias_mult) * position_bias_base[-x.shape[1]:, :x.shape[1]], negative_infinity_matrix_base[-x.shape[1]:, :x.shape[1]])
-        
+        attn_mask = torch.where(causal_mask[:x.shape[1], :x.shape[1]], F.softplus(self.position_bias_mult) * position_bias_base[:x.shape[1], :x.shape[1]], negative_infinity_matrix_base[:x.shape[1], :x.shape[1]])
+
         # Shared LayerNorm for linear layers and attention
         x = self.norm(x)
 
@@ -249,10 +249,22 @@ class LatentAttentionBlock(nn.Module):
         geglu = linear * F.gelu(pre_gelu)
 
         # Partition between the input values and the v dim values
-        geglu_local, geglu_attention_value = geglu.split((self.expand_dim-self.v_dim, self.v_dim), -1)
+        if self.linear_value:
+            geglu_local, _ = geglu.split((self.expand_dim-self.v_dim, self.v_dim), -1)
+            _, geglu_attention_value = pre_gelu.split((self.expand_dim-self.v_dim, self.v_dim), -1)
+        else:
+            geglu_local, geglu_attention_value = geglu.split((self.expand_dim-self.v_dim, self.v_dim), -1)
+
+        if self.num_heads > 1:
+            query, key, geglu_local, geglu_attention_value = map(lambda x: einops.rearrange(x, 'b n (h d) -> b h n d', h=self.num_heads), (query, key, geglu_local, geglu_attention_value))
+
 
         # Compute attention. Something to note is that there are no attention heads here. This seemed to work a bit better, maybe due to not needing memory `.contiguous()` calls or similar
         attention = F.scaled_dot_product_attention(query, key, geglu_attention_value, attn_mask=attn_mask)
+
+        if self.num_heads > 1:
+            attention = einops.rearrange(attention, 'b h n d -> b n (h d)')
+            geglu_local = einops.rearrange(geglu_local, 'b h n d -> b n (h d)')
 
         # Output linear layer
         out = F.linear(torch.cat([geglu_local, attention], dim=-1), self.project)
@@ -283,11 +295,18 @@ class SpeedyLangNet(nn.Module):
         return x
 
 
-def make_net():
+def make_net(num_heads: int = 1):
     network_dict = nn.ModuleDict({
         # Add two special tokens for the forward and backward pass, even if they are unused
         'embedding': nn.Embedding(hyp['misc']['num_tokens']+2, hyp['net']['residual_depth'], scale_grad_by_freq=True),
-        'attn_layers': nn.ModuleList([LatentAttentionBlock(hyp['net']['residual_depth']) for _ in range(hyp['net']['num_blocks'])]),
+        'attn_layers': nn.ModuleList([
+            LatentAttentionBlock(
+                hyp['net']['residual_depth'],
+                linear_value=False,
+                num_heads=num_heads,
+            ) 
+            for _ in range(hyp['net']['num_blocks'])]
+        ),
         'norm': nn.LayerNorm(hyp['net']['residual_depth'], bias=False),
         'outputs': nn.Linear(hyp['net']['residual_depth'], hyp['misc']['num_tokens']+2, bias=False),
 })
@@ -546,6 +565,7 @@ def train(
         backward_prob: float,
         adjust_backward_prob: bool,
         use_extra_tokens: bool,
+        num_heads: int,
 ):
 
     #################
@@ -581,7 +601,7 @@ def train(
     backward_probs = []
 
     # Get network
-    net = make_net()
+    net = make_net(num_heads=num_heads)
 
     # Get the total number of parameters in our model and use that to generate/calculate the base lr.
     total_trainable_params = sum([p.data.numel() if p.requires_grad else 0 for p in net.parameters()])
@@ -791,6 +811,7 @@ def get_args() -> argparse.Namespace:
     parser.add_argument("--scale_manually", action="store_true", help="If set, depth and width will be set through the cli.")
     parser.add_argument("--depth", type=int, default=8, nargs="+", help="The depth of the model to train.")
     parser.add_argument("--width", type=int, default=384, nargs="+", help="The width of the model to train.")
+    parser.add_argument("--num_heads", type=int, default=1, nargs="+", help="The number of heads to use in the attention mechanism.")
     parser.add_argument("--mask", type=str, choices=["forward", "backward", "bidirectional"], nargs="+", default="forward", help="The type of mask to use for the attention mechanism.")
     parser.add_argument("--backward_prob", type=float, default=1.0, nargs="+", help="Only relevant if mask==bidirectional")
     parser.add_argument("--adjust_backward_prob", type=int, nargs="+", default=0, help="If set, backward prob will be dynamically adjusted.")
@@ -821,19 +842,23 @@ def get_args() -> argparse.Namespace:
 
 def get_settings(args: argparse.Namespace) -> list:
     if args.scale_manually:
-        standard_settings = list(itertools.product(args.depth, args.width, args.mask))
-        standard_settings = [(1.0, depth, width, mask) for depth, width, mask in standard_settings]
+        standard_settings = list(itertools.product(args.depth, args.width, args.num_heads, args.mask))
+        standard_settings = [
+            (1.0, depth, width, num_heads, mask) 
+            for depth, width, num_heads, mask in standard_settings
+            if width % num_heads == 0
+        ]
     else:
-        standard_settings = list(itertools.product(args.model_scale, args.mask))
-        standard_settings = [(ms, None, None, mask) for ms, mask in standard_settings]
+        standard_settings = list(itertools.product(args.model_scale, args.num_heads, args.mask))
+        standard_settings = [(ms, None, None, num_heads, mask) for ms, num_heads, mask in standard_settings]
 
     bw_settings = [(bp, False) for bp in args.backward_prob if False in args.adjust_backward_prob]
     if True in args.adjust_backward_prob:
         bw_settings.append((1.0, True))
 
     combined_settings = [
-        (ms, depth, width, mask, bp, adjust_backward_prob)
-        for ms, depth, width, mask in standard_settings
+        (ms, depth, width, num_heads, mask, bp, adjust_backward_prob)
+        for ms, depth, width, num_heads, mask in standard_settings
         for bp, adjust_backward_prob in bw_settings
         if mask == "bidirectional"
     ]
@@ -850,7 +875,7 @@ def main() -> None:
     global hyp, model_scale
     change_gpu_token_capacity(args.gpu_capacity_scalar)
 
-    for setting_num, (model_scalar, depth, width, mask, backward_prob, adjust_backward_prob) in enumerate(settings):
+    for setting_num, (model_scalar, depth, width, num_heads, mask, backward_prob, adjust_backward_prob) in enumerate(settings):
         seed = args.seed
         for run in range(args.num_runs):
             change_model_scale(model_scalar, depth, width)  # has to run here; remove_layers influences hyp
@@ -892,6 +917,7 @@ def main() -> None:
                 backward_prob=backward_prob,
                 adjust_backward_prob=adjust_backward_prob,
                 use_extra_tokens=args.use_extra_tokens,
+                num_heads=num_heads,
             )
 
             cut_accs_fw, cut_losses_fw, cut_pplxs_fw, cut_accs_bw, cut_losses_bw, cut_pplxs_bw, n_layers_removed = [], [], [], [], [], [], []
@@ -917,6 +943,7 @@ def main() -> None:
                 "model_scale": [model_scale],
                 "depth": depth,
                 "width": [hyp['net']['residual_depth']],
+                "num_heads": [num_heads],
                 "num_params": [num_params],
                 "run_num": [run],
                 "seed": [seed],
