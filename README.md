@@ -7,13 +7,14 @@ I can see three potential benefits from this:
 1. Forcing the model to learn to distinguish between a fw and bw causal mask, and adjust properly, 
     may serve as a form of dataset augmentation that effectively increases the data diversity
 2. If your limiting factor for computation is data ingestion (like I've read it is for Cerebras, for example),
-    injesting the data once, then calculating the loss on both the fw and bw mask could lead to higher 
+    ingesting the data once, then calculating the loss on both the fw and bw mask could lead to higher 
     utilization of your accelerator
 3. A ColBERT replacement. That uses BERT-style masking, but the best open models use forward masking.
     I thought it might make sense to enable those powerful models to also do the bw masking necessary to take,
     for example, footnotes into account
 
-All in all, these experiments are mostly a failure, but I'm going to document the results here anyways.
+I have tested point 1 for now, and the results, while negative at the scales I trained at, show a promising scaling trend.
+I suspect that this actually works well!
 
 
 ## Method
@@ -21,12 +22,16 @@ All in all, these experiments are mostly a failure, but I'm going to document th
 I trained hlb-gpt v0.4.1 for 10 epochs on wikitext. I predict using a fw mask and, with probability $p_bw$,
 also predict using a bw mask on the same tokens (with the labels shifted etc., of course).
 I accumulate the losses and then do a backward pass.
-Inspired by Yi Tay et al.'s UL2 (todo: get the actual citation, check for misspellings),
+Inspired by [Yi Tay et al.'s UL2](https://arxiv.org/abs/2205.05131),
 I've informed the models of their task by giving them a special token at the beginning of text
 if I'm fw masking or a different one at the end of the text if I'm bw masking.
+In early testing, this improved performance noticeably.
 
-I do this for different model sizes (specifically, I control both the depth and width of the model),
-and to values of $p_{bw}$: 0.1 and 0.05 (in early testing, higher probabilities made the bw prediction too easy).
+I do this for different model sizes:
+I trained three models for every combination of depth in $\{4, 8, 16, 32\}$
+and width in $\{192, 384, 768, 1536\}$.
+This is done for different values of $p_{bw}$: $0.0$, $0.1$ and $0.05$
+(in early testing, higher probabilities made the bw prediction too easy).
 
 After a model is trained for 10 epochs, I remove the transformer layers one by one, starting from the back,
 and evaluate the resulting model after each removal. I hope that this gives me some insights into
@@ -42,11 +47,11 @@ I've saved all results, but below, will only show you the average over all three
 
 Let's quickly work through points 2 and 3:
 
-- Point 2: Fixing data ingestion issues (if they are even a real thing) isn't going to happen this way.
-    $M_{0.1}$ is already much worse than $M_{0.0}$, so backward masking at a significant level is undesireable.
+- Point 2: Fixing data ingestion issues (if they are even a real thing) is unlikely to happen this way.
+    $p_{bw} = 10\%$ is already much worse than $p_{bw} = 5\%$, so backward masking at a significant level is undesireable.
 - Point 3: Post-training models to serve as late-interaction RAG models may or may not work;
     I haven't tried yet (I'm doing this in my freetime with my own money, of which I only have limited amounts).
-    Maybe I will try next month, maybe not
+    Maybe I will try next month, maybe not.
 
 With that out of the way, I will now write about point 1, improving performance given a constant number of training tokens.
 
@@ -63,15 +68,18 @@ was very skewed towards the fw-only models.
 
 ### Metrics
 
-- **val_loss**: The validation loss in fw- and bw-direction.
-- **ratio**: The models trained with $p_{bw} > 0\%$ are obviously better at the bw prediction
+Besides the obvious metrics, like validation loss or accuracy, I look at two ratios that are very telling:
+
+1. **ratio ($p_{bw} = 0\%$) / ($p_{bw} = x>0\%$); \<metric\> fw**: 
+    The models trained with $p_{bw} > 0\%$ are obviously better at the bw prediction
     than the ones trained with $p_{bw} = 0\%$.
     What I'm interested in here is how a non-zero $p_{bw}$ impacts the fw performance of the models.
-    The *ratio* is the performance for $p_{bw} = 0\%$ divided by the performance for $p_{bw} = x\%$,
+    This *ratio* is the performance for $p_{bw} = 0\%$ divided by the performance for $p_{bw} = x\%$,
     where $x$ is usually $5$, and the performance is usually just measured by the validation loss.
-
-I have captured other metrics as well, such as the accuracy and perplexity, for both training and validation,
-but those two are the main ones I will present.
+2. **ratio \<metric\> fw / bw; $p_{bw} = x \ge 0 \%$**:
+    How much better is a model at the fw task than the bw task?
+    Lower obviously means better fw, while higher means better bw performance.
+    This will be interesting when looking at performance with layers removed.
 
 ### Performance for different widths
 
@@ -94,11 +102,7 @@ Now, let's look at how this behaves for different model scales.
 
 ### Performance by model scale
 
-To gauge the scaling behavior of this technique,
-I trained three models for every combination of depth in $\{4, 8, 16, 32\}$
-and width in $\{192, 384, 768, 1536\}$.
-
-Below, I show the ratio (as described [above under Metrics](#metrics)) for models of different
+Below, I show the ratio 1 between the fw performance of models trained with $p_{bw} = 0\%$ compared to those trained with $p_{bw} = 5\%$ (as described [above under Metrics](#metrics)) for models of different
 width and depth, as well as over the combined number of parameters.
 
 I compute the ratio independently for each of the training runs per setting,
@@ -110,7 +114,7 @@ and plot them as a boxplot or violinplot.
 
 Below, you can see the violinplot for all available data ($\mathrm{epoch}_{\mathrm{start}} = 0, \mathrm{epoch}_{\mathrm{stop}} = \mathrm{inf}$):
 
-![Ratio by model size: all epochs](results/images/violinplot_ratio_by_num_params_val_losses_epoch_start_0_stop_None.png)
+![(Violinplot): Ratio 1 by model size: all epochs](results/images/violinplot_ratio_by_num_params_val_losses_epoch_start_0_stop_None.png)
 
 A few thoughts:
 
@@ -121,30 +125,60 @@ A few thoughts:
     meaning that the models trained with $p_{bw} = 5\%$ are catching up in fw performance
     to the models trained with $p_{bw} = 0\%$.
 - In the largest model, performance has caught up.
+    This is fantastic! It implies that with the model sizes common today, using $p_{bw} = 5\%$
+    at worst doesn't negatively impact fw performance, while unlocking BERT-like capabilities,
+    and at best positively impacts fw performance.
+- This scaling law&mdash;first inverse, then normal&mdash;applies more strongly to the width than to the depth.
 
-**Why the inverse scaling?**
+So how does this apply at different epochs during training?
+Here is the violinplot of ratio 1 for only the first epoch
+($\mathrm{epoch}_{\mathrm{start}} = 0, \mathrm{epoch}_{\mathrm{stop}} = 1$):
 
-I suspect that the inverser scaling for small models is a result of the specific setup.
+![(Violinplot) Ratio 1 by model size: epoch 1](results/images/violinplot_ratio_by_num_params_val_losses_epoch_start_0_stop_1.png)
 
-...fw & bw or fw only...
+It looks like in the first epoch, even the largest model has a ratio significantly below $1$.
+This implies that it takes many samples for the models trained with $p_{bw} = 5\%$ to catch up to those
+trained with $p_{bw} = 0\%$ in fw performance.
 
-This leads to overfitting to and memorization of the tokens that are seen for both the fw and bw task.
+To check out how the performance looks after the models have been trained for a bit, let's look at the ratio for epochs 5 to 10.
+This means that the poor performance at early training phases doesn't impact the statistics,
+and we get a better idea of what the models will converge to.
+Here is ($\mathrm{epoch}_{\mathrm{start}} = 5, \mathrm{epoch}_{\mathrm{stop}} = \mathrm{inf}$)
 
-How does that lead to the observed scaling behavior?
-
-- The smallest models have so little model capacity that they cannot do much memorization,
-    forcing them to generalize a bit.
-    This means that training on the bw task doesn't decay performance on the fw task too much.
-- At a middle size, memorization takes over, leading to poor generalization compared to what the model capacity allows.
-- At a large size, the model is strong enough to memorize all the data, regardless of the training task and how often it was seen.
-    It then generalizes beyond that (maybe by interpolation, doesn't matter for this argument).
-
-...making choice might be better...
+![(Violinplot) Ratio 1 by model size: epochs 5 to 10](results/images/violinplot_ratio_by_num_params_val_losses_epoch_start_5_stop_None.png)
 
 
-### Bw performance comes from late layers
+Observations:
+
+- The scaling effects are much stronger here!
+- In the largest model, the median ratio is essentially 1.
+
+Taken together, this makes me think that with more scaling, models trained with $p_{bw} = 5\%$ could have the same or even better
+fw performance as ones trained with $p_{bw} = 0\%$.
+
+### Performance by model layer
 
 Let's cut away the model's layers one by one and evaluate every time.
+
+#### Ratio 1: $p_{bw} = 0\%$ / $p_{bw} = 5\%$; fw task
+
+How does the relative performance of the models trained with $p_{bw} = 0\%$ vs those trained with $p_{bw} = 5\%$ change
+over the layers?
+
+Note that I only compare the performance of the final checkpoint here, so this is much less statistically meaningful than
+the analysis above, where I compared performance for many steps throughout training.
+However, it gives an indication of the trends in the models per layer and model size.
+
+![fw-val-loss for p_bw=0% vs p_bw=5%](results/images/fw_cut_losses_with_fw_vs_bidirectional_mask_over_number_of_layer_remaining.png)
+
+Note: while the ratio is often $1.0$ in this plot, that is because I round to one significant digit, and a lot of the ratios are merely close to $1.0$. To make this more clear, here is the same plot, but for the validation perplexity instead of the loss:
+
+![fw-va-pplxs for p_bw=0% vs p_bw=5%](results/images/fw_cut_pplxs_with_fw_vs_bidirectional_mask_over_number_of_layer_remaining.png)
+
+
+
+#### Ratio 2: fw / bw task; $p_{bw} = 5\%$
+
 How does the relative performance between the fw and bw task change?
 Importantly, this is not a comparison of fw performance for two different values of $p_{bw}$ as before,
 but a comparison between fw and be performance for the same value of $p_{bw} = 5\%$.
