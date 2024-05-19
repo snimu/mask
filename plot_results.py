@@ -680,11 +680,12 @@ def plot_fw_vs_bw_perf_with_bidirectional_mask_over_number_of_layer_remaining(
 
     fig, axs = plt.subplots(len(param_nums), 1, figsize=(12, 8), sharex=True)
     bar_width = 0.95  # Set the bar width to 0.95
-    norm = mcolors.Normalize(vmin=0.5, vmax=2)  # Normalize for the color map
     cmap = plt.cm.RdYlGn  # Red-Yellow-Green colormap
 
     metric_for_final_layer = "val_" + to_plot.split("_")[1]
 
+    all_ratios = []
+    all_num_layers_remaining = []
     for i in range(len(param_nums)):
         df_params = (
             pl.scan_csv(file)
@@ -721,7 +722,14 @@ def plot_fw_vs_bw_perf_with_bidirectional_mask_over_number_of_layer_remaining(
         else:
             raise ValueError("calculation_order must be 'mean then ratio' or 'ratio then mean'")
 
-        colors = [cmap(norm(ratio)) for ratio in ratios]
+        all_ratios.append(ratios)
+        all_num_layers_remaining.append(num_layers_remaining)
+
+    flat_ratios = np.concatenate(all_ratios)
+    cmap_norm = mcolors.Normalize(vmin=flat_ratios.min(), vmax=flat_ratios.max())
+
+    for i, (ratios, num_layers_remaining) in enumerate(zip(all_ratios, all_num_layers_remaining)):
+        colors = [cmap(cmap_norm(ratio)) for ratio in ratios]
 
         for j in range(len(colors)):
             axs[i].bar(num_layers_remaining[j], 1, width=bar_width, color=colors[j], align='center')
@@ -738,8 +746,7 @@ def plot_fw_vs_bw_perf_with_bidirectional_mask_over_number_of_layer_remaining(
     plt.subplots_adjust(hspace=0.5, left=0.03, right=0.9, bottom=0.25, top=0.85)  # Adjust the layout
 
     # Add a colorbar
-    norm = mcolors.Normalize(vmin=0, vmax=2)  # Normalize for the color map from 0 to 2
-    sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+    sm = plt.cm.ScalarMappable(cmap=cmap, norm=cmap_norm)
     sm.set_array([])
 
     # Add colorbar below the entire plot
@@ -778,19 +785,14 @@ def plot_fw_perf_with_fw_vs_bidirectional_mask_over_number_of_layer_remaining(
 ) -> None:
     param_nums = unique_num_params(file)
 
-    cmap_norm_vals = {
-        "cut_accs": (1, 1.7),
-        "cut_losses": (0.8, 1.1),
-        "cut_pplxs": (0.3, 2),
-    }
-    cmap_norm = mcolors.Normalize(vmin=cmap_norm_vals[to_plot][0], vmax=cmap_norm_vals[to_plot][1])  # Normalize for the color map
-
     fig, axs = plt.subplots(len(param_nums), 1, figsize=(12, 8), sharex=True)
     bar_width = 0.95  # Set the bar width to 0.95
     cmap = plt.cm.RdYlGn  # Red-Yellow-Green colormap
 
     metric_for_final_layer = "val_" + to_plot.split("_")[1]
 
+    all_ratios = []
+    all_num_layers_remaining = []
     for i in range(len(param_nums)):
         df_bidir = (
             pl.scan_csv(file)
@@ -840,6 +842,13 @@ def plot_fw_perf_with_fw_vs_bidirectional_mask_over_number_of_layer_remaining(
             ratios = np.mean(np.array(perf_fw) / np.array(perf_bidir), axis=0)
         else:
             raise ValueError("calculation_order must be 'mean then ratio' or 'ratio then mean'")
+        
+        all_ratios.append(ratios)
+        all_num_layers_remaining.append(num_layers_remaining)
+
+    cmap_norm = mcolors.Normalize(vmin=min([ratios.min() for ratios in all_ratios]), vmax=max([ratios.max() for ratios in all_ratios]))  # Normalize for the color map
+
+    for i, (ratios, num_layers_remaining) in enumerate(zip(all_ratios, all_num_layers_remaining)):
         colors = [cmap(cmap_norm(ratio)) for ratio in ratios]
 
         for j in range(len(colors)):
@@ -876,7 +885,7 @@ def plot_fw_perf_with_fw_vs_bidirectional_mask_over_number_of_layer_remaining(
     if show:
         plt.show()
     else:
-        savefile = f"fw_{to_plot}_with_fw_vs_bidirectional_mask_over_number_of_layer_remaining.png"
+        savefile = f"fw_{to_plot}_with_fw_vs_bidirectional_mask_over_number_of_layer_remaining_{calculation_order}.png"
         plt.savefig(f"results/images/{savefile}", dpi=300)
     close_plt()
 
@@ -922,18 +931,19 @@ if __name__ == "__main__":
     #     from_x_val=0,
     #     to_x_val=1,
     # )
-    plot_fw_vs_bw_perf_with_bidirectional_mask_over_number_of_layer_remaining(
-        file=file,
-        initial_backward_prob=0.05,
-        adjust_backward_prob=False,
-        to_plot="cut_losses",
-        calculation_order="mean_then_ratio",
-        show=True,
-    )
-    # plot_fw_perf_with_fw_vs_bidirectional_mask_over_number_of_layer_remaining(
+    # plot_fw_vs_bw_perf_with_bidirectional_mask_over_number_of_layer_remaining(
     #     file=file,
     #     initial_backward_prob=0.05,
     #     adjust_backward_prob=False,
-    #     to_plot="cut_pplxs",
+    #     to_plot="cut_losses",
+    #     calculation_order="ratio_then_mean",
     #     show=False,
     # )
+    plot_fw_perf_with_fw_vs_bidirectional_mask_over_number_of_layer_remaining(
+        file=file,
+        initial_backward_prob=0.05,
+        adjust_backward_prob=False,
+        to_plot="cut_pplxs",
+        calculation_order="mean_then_ratio",
+        show=False,
+    )
