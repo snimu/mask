@@ -673,6 +673,7 @@ def plot_fw_vs_bw_perf_with_bidirectional_mask_over_number_of_layer_remaining(
             "cut_losses", 
             "cut_pplxs", 
         ] = "cut_losses",
+        calculation_order: Literal["mean_then_ratio", "ratio_then_mean"] = "ratio_then_mean",
         show: bool = True,
 ) -> None:
     param_nums = unique_num_params(file)
@@ -711,12 +712,15 @@ def plot_fw_vs_bw_perf_with_bidirectional_mask_over_number_of_layer_remaining(
             fw.append([ast.literal_eval(row[3])[-1]] + ast.literal_eval(row[1]))
             bw.append([ast.literal_eval(row[4])[-1]] + ast.literal_eval(row[2]))
 
-        n_layers_removed = np.array(n_layers_removed).mean(axis=0)
+        n_layers_removed = np.array(n_layers_removed).mean(axis=0).astype(np.int64)  # throw error in mean if shapes don't fit
         num_layers_remaining = max(n_layers_removed) - n_layers_removed + 1  # Calculate number of layers remaining
-        fw = np.flip(np.array(fw).mean(axis=0), axis=0)  # Flip the array to match the order of the x-axis
-        bw = np.flip(np.array(bw).mean(axis=0), axis=0)  # Flip the array to match the order of the x-axis
+        if calculation_order == "mean_then_ratio":
+            ratios = np.array(fw).mean(axis=0) / np.array(bw).mean(axis=0)
+        elif calculation_order == "ratio_then_mean":
+            ratios = np.mean(np.array(fw) / np.array(bw), axis=0)
+        else:
+            raise ValueError("calculation_order must be 'mean then ratio' or 'ratio then mean'")
 
-        ratios = fw / bw
         colors = [cmap(norm(ratio)) for ratio in ratios]
 
         for j in range(len(colors)):
@@ -724,6 +728,7 @@ def plot_fw_vs_bw_perf_with_bidirectional_mask_over_number_of_layer_remaining(
             text_color = get_contrasting_text_color(colors[j])
             axs[i].text(num_layers_remaining[j], 1, f'{ratios[j]:.1f}', ha='center', va='top', color=text_color, fontsize=10)
 
+        # Label the axis with the number of parameters
         axs[i].text(1.02, 0.5, format_num_params(param_nums[i]), va='center', ha='left', transform=axs[i].transAxes)
         axs[i].tick_params(axis='y', which='both', left=False, right=False, labelleft=False)
 
@@ -746,7 +751,7 @@ def plot_fw_vs_bw_perf_with_bidirectional_mask_over_number_of_layer_remaining(
     fig.text(0.5, 0.2, 'num_layers_remaining', ha='center', va='center')
 
     # Add main title
-    fig.suptitle(f'fw/bw {metric_for_final_layer} ratio for p_bw={initial_backward_prob}', fontsize=16)
+    fig.suptitle(f'fw/bw {metric_for_final_layer} ratio for p_bw={initial_backward_prob} ({calculation_order})', fontsize=16)
 
     # Add label for parameter numbers above them
     fig.text(0.94, 0.88, '#params', ha='center', va='center', fontsize=12, rotation=0)
@@ -754,7 +759,7 @@ def plot_fw_vs_bw_perf_with_bidirectional_mask_over_number_of_layer_remaining(
     if show:
         plt.show()
     else:
-        savefile = f"fw_vs_bw_perf_with_bidirectional_mask_over_number_of_layer_remaining_{to_plot}.png"
+        savefile = f"fw_vs_bw_perf_with_bidirectional_mask_over_number_of_layer_remaining_{to_plot}_{calculation_order}.png"
         plt.savefig(f"results/images/{savefile}", dpi=300)
     close_plt()
 
@@ -768,6 +773,7 @@ def plot_fw_perf_with_fw_vs_bidirectional_mask_over_number_of_layer_remaining(
             "cut_losses", 
             "cut_pplxs", 
         ] = "cut_losses",
+        calculation_order: Literal["mean_then_ratio", "ratio_then_mean"] = "ratio_then_mean",
         show: bool = True,
 ) -> None:
     param_nums = unique_num_params(file)
@@ -810,7 +816,6 @@ def plot_fw_perf_with_fw_vs_bidirectional_mask_over_number_of_layer_remaining(
 
         n_layers_removed = np.array(n_layers_removed).mean(axis=0)
         num_layers_remaining = max(n_layers_removed) - n_layers_removed + 1  # Calculate number of layers remaining
-        perf_bidir = np.array(perf_bidir).mean(axis=0)
 
         df_fw = (
             pl.scan_csv(file)
@@ -829,9 +834,12 @@ def plot_fw_perf_with_fw_vs_bidirectional_mask_over_number_of_layer_remaining(
         for row in df_fw.iter_rows():
             perf_fw.append([ast.literal_eval(row[2])[-1]] + ast.literal_eval(row[1]))
         
-        perf_fw = np.array(perf_fw).mean(axis=0)
-
-        ratios = np.flip(perf_fw / perf_bidir, axis=0)  # Flip to match x-axis
+        if calculation_order == "mean_then_ratio":
+            ratios = np.array(perf_fw).mean(axis=0) / np.array(perf_bidir).mean(axis=0)
+        elif calculation_order == "ratio_then_mean":
+            ratios = np.mean(np.array(perf_fw) / np.array(perf_bidir), axis=0)
+        else:
+            raise ValueError("calculation_order must be 'mean then ratio' or 'ratio then mean'")
         colors = [cmap(cmap_norm(ratio)) for ratio in ratios]
 
         for j in range(len(colors)):
@@ -860,7 +868,7 @@ def plot_fw_perf_with_fw_vs_bidirectional_mask_over_number_of_layer_remaining(
     fig.text(0.5, 0.2, 'num_layers_remaining', ha='center', va='center')
 
     # Add main title
-    fig.suptitle(f'fw {metric_for_final_layer}: p_bw=0 / p_bw={initial_backward_prob}', fontsize=16)
+    fig.suptitle(f'fw {metric_for_final_layer}: p_bw=0 / p_bw={initial_backward_prob} ({calculation_order})', fontsize=16)
 
     # Add label for parameter numbers above them
     fig.text(0.94, 0.88, '#params', ha='center', va='center', fontsize=12, rotation=0)
@@ -914,17 +922,18 @@ if __name__ == "__main__":
     #     from_x_val=0,
     #     to_x_val=1,
     # )
-    # plot_fw_vs_bw_perf_with_bidirectional_mask_over_number_of_layer_remaining(
-    #     file=file,
-    #     initial_backward_prob=0.05,
-    #     adjust_backward_prob=False,
-    #     to_plot="cut_losses",
-    #     show=False,
-    # )
-    plot_fw_perf_with_fw_vs_bidirectional_mask_over_number_of_layer_remaining(
+    plot_fw_vs_bw_perf_with_bidirectional_mask_over_number_of_layer_remaining(
         file=file,
         initial_backward_prob=0.05,
         adjust_backward_prob=False,
-        to_plot="cut_pplxs",
-        show=False,
+        to_plot="cut_losses",
+        calculation_order="mean_then_ratio",
+        show=True,
     )
+    # plot_fw_perf_with_fw_vs_bidirectional_mask_over_number_of_layer_remaining(
+    #     file=file,
+    #     initial_backward_prob=0.05,
+    #     adjust_backward_prob=False,
+    #     to_plot="cut_pplxs",
+    #     show=False,
+    # )
