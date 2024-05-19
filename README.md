@@ -19,7 +19,7 @@ I suspect that this actually works well!
 
 ## Method
 
-I trained hlb-gpt v0.4.1 for 10 epochs on wikitext. I predict using a fw mask and, with probability $p_bw$,
+I trained hlb-gpt v0.4.1 for 10 epochs on wikitext. I predict using a fw mask and, with probability $p_{bw}$,
 also predict using a bw mask on the same tokens (with the labels shifted etc., of course).
 I accumulate the losses and then do a backward pass.
 Inspired by [Yi Tay et al.'s UL2](https://arxiv.org/abs/2205.05131),
@@ -30,7 +30,7 @@ In early testing, this improved performance noticeably.
 I do this for different model sizes:
 I trained three models for every combination of depth in $\{4, 8, 16, 32\}$
 and width in $\{192, 384, 768, 1536\}$.
-This is done for different values of $p_{bw}$: $0.0$, $0.1$ and $0.05$
+This is done for different values of $p_{bw}$: $0\%$, $5\%$ and $10\%$
 (in early testing, higher probabilities made the bw prediction too easy).
 
 After a model is trained for 10 epochs, I remove the transformer layers one by one, starting from the back,
@@ -50,8 +50,14 @@ Let's quickly work through points 2 and 3:
 - Point 2: Fixing data ingestion issues (if they are even a real thing) is unlikely to happen this way.
     $p_{bw} = 10\%$ is already much worse than $p_{bw} = 5\%$, so backward masking at a significant level is undesireable.
 - Point 3: Post-training models to serve as late-interaction RAG models may or may not work;
-    I haven't tried yet (I'm doing this in my freetime with my own money, of which I only have limited amounts).
-    Maybe I will try next month, maybe not.
+    I haven't tried yet.
+    I unfortunately have limited amounts of money and time, as I am doing this privately, so I may never get to trying this out myself.
+
+    The basic idea would be to do a fw and a bw prediction on the same text, then use attentive pooling of some sort to produce the combined embeddings for each token, so that these embeddings can be used for ColBERT-style late-interaction RAG.
+    
+    The advantage would be that you could just fine-tune an open-source model (Llama3 or whatever else you want) to be able to do this, and get the advantage of its extremely high-quality representations.
+
+    This should just work; below, you will see that the bw-performance is excellent with $p_{bw} = 5\%$, so I suspect that fine-tuning on this task after the fact would work fine.
 
 With that out of the way, I will now write about point 1, improving performance given a constant number of training tokens.
 
@@ -70,16 +76,23 @@ was very skewed towards the fw-only models.
 
 Besides the obvious metrics, like validation loss or accuracy, I look at two ratios that are very telling:
 
-1. **ratio ($p_{bw} = 0\%$) / ($p_{bw} = x>0\%$); \<metric\> fw**: 
+1. **ratio 1: ($p_{bw} = 0\%$) / ($p_{bw} = x>0\%$); \<metric\> fw**: 
     The models trained with $p_{bw} > 0\%$ are obviously better at the bw prediction
     than the ones trained with $p_{bw} = 0\%$.
     What I'm interested in here is how a non-zero $p_{bw}$ impacts the fw performance of the models.
-    This *ratio* is the performance for $p_{bw} = 0\%$ divided by the performance for $p_{bw} = x\%$,
-    where $x$ is usually $5$, and the performance is usually just measured by the validation loss.
-2. **ratio \<metric\> fw / bw; $p_{bw} = x \ge 0 \%$**:
+    This ratio is the performance for $p_{bw} = 0\%$ divided by the performance for $p_{bw} = x\%$,
+    where $x$ is usually $5$, and the \<metric\> is usually just the validation loss.
+2. **ratio 2: \<metric\> fw / bw; $p_{bw} = x \ge 0 \%$**:
     How much better is a model at the fw task than the bw task?
     Lower obviously means better fw, while higher means better bw performance.
     This will be interesting when looking at performance with layers removed.
+
+For both, I have two ways to calculate the average ratio over several runs:
+
+1. First calculate the means of the metric over the runs, then calculate the ratio.
+    This will squash outliers. I will call it `mean_then_ratio`.
+2. First calculate the individual ratios per step/..., then average them over the runs.
+    This measure is more receptive to outliers. I will call it `ratio_then_mean`.
 
 ### Performance for different widths
 
@@ -112,7 +125,7 @@ and independently for each of $500$ steps over the approximately $10$ epochs
 Then, take the ratios falling into the range $\left[\mathrm{epoch}_{\mathrm{start}}, \mathrm{epoch}_{\mathrm{stop}}\right]$
 and plot them as a boxplot or violinplot.
 
-Below, you can see the violinplot for all available data ($\mathrm{epoch}_{\mathrm{start}} = 0, \mathrm{epoch}_{\mathrm{stop}} = \mathrm{inf}$):
+Below, you can see the violinplot for all available data ($\mathrm{epoch}_{\mathrm{start}} = 0, \mathrm{epoch}_{\mathrm{stop}} = 10$):
 
 ![(Violinplot): Ratio 1 by model size: all epochs](results/images/violinplot_ratio_by_num_params_val_losses_epoch_start_0_stop_None.png)
 
@@ -139,11 +152,12 @@ Here is the violinplot of ratio 1 for only the first epoch
 It looks like in the first epoch, even the largest model has a ratio significantly below $1$.
 This implies that it takes many samples for the models trained with $p_{bw} = 5\%$ to catch up to those
 trained with $p_{bw} = 0\%$ in fw performance.
+It might be interesting to try this on a more serious dataset than wikitext.
 
 To check out how the performance looks after the models have been trained for a bit, let's look at the ratio for epochs 5 to 10.
 This means that the poor performance at early training phases doesn't impact the statistics,
 and we get a better idea of what the models will converge to.
-Here is ($\mathrm{epoch}_{\mathrm{start}} = 5, \mathrm{epoch}_{\mathrm{stop}} = \mathrm{inf}$)
+Here is ($\mathrm{epoch}_{\mathrm{start}} = 5, \mathrm{epoch}_{\mathrm{stop}} = 10$)
 
 ![(Violinplot) Ratio 1 by model size: epochs 5 to 10](results/images/violinplot_ratio_by_num_params_val_losses_epoch_start_5_stop_None.png)
 
@@ -169,40 +183,62 @@ Note that I only compare the performance of the final checkpoint here, so this i
 the analysis above, where I compared performance for many steps throughout training.
 However, it gives an indication of the trends in the models per layer and model size.
 
-![fw-val-loss for p_bw=0% vs p_bw=5%](results/images/fw_cut_losses_with_fw_vs_bidirectional_mask_over_number_of_layer_remaining.png)
+Because the differences in performance are so low, they are often rounded to $1.0$, which can give a wrong impression.
+So instead of the validation loss, I will plot the validation perplexity instead.
 
-Note: while the ratio is often $1.0$ in this plot, that is because I round to one significant digit, and a lot of the ratios are merely close to $1.0$. To make this more clear, here is the same plot, but for the validation perplexity instead of the loss:
+Let's begin with `ratio_then_mean`, plotting ratio 1 over the number of layers remaining:
 
-![fw-va-pplxs for p_bw=0% vs p_bw=5%](results/images/fw_cut_pplxs_with_fw_vs_bidirectional_mask_over_number_of_layer_remaining.png)
+![fw-val-pplxs for p_bw=0% vs p_bw=5% (mean-then-ratio)](results/images/fw_cut_pplxs_with_fw_vs_bidirectional_mask_over_number_of_layer_remaining_ratio_then_mean.png)
 
+Some intersting things are going on here:
 
+- In the deep models, it seems like the ratio is high in early layers.
+    This means that early layers of models trained with $p_{bw} = 5\%$
+    are stronger in the fw task than those of ones trained with $p_{bw} = 0\%$.
+- In the same deep models, the middle layers are aweful for $p_{bw} = 5\%$ compared to the same layers for $p_{bw} = 0\%$.
+- Only in late layers does the ratio recover and approach $1$ again.
+- This could imply one of two things (or both at once, of course):
+    1. Models trained with $p_{bw} = 0\%$ do a bunch of irrelevant stuff in early layers,
+        do the real work in the middle layers, and then only refine somewhat in the late layers.
+        Models trained with $p_{bw} = 5\%$ on the other hand show a more constant improvement in performance.
+    2. Models trained with $p_{bw} = 5\%$ are forced to do a lot of good work in early layers,
+        then take the bw task into consideration in the middle layers, and consolidate in late layers.
+        Models trained with $p_{bw} = 0\%$ on the other hand show a more constant improvement in performance.
+    
+    It might be interesting to merge models trained with $p_{bw} = 0\%$ with ones trained with $p_{bw} = 5\%$.
+
+And here is `mean_then_ratio`:
+
+![fw-va-pplxs for p_bw=0% vs p_bw=5% (ratio-then-mean)](results/images/fw_cut_pplxs_with_fw_vs_bidirectional_mask_over_number_of_layer_remaining_ratio_then_mean.png)
+
+As you can see, this is identical, which indicates that there are no serious outliers in either the performance of $p_{bw} = 0\%$ runs or of $p_{bw} = 5\%$ runs.
 
 #### Ratio 2: fw / bw task; $p_{bw} = 5\%$
 
 How does the relative performance between the fw and bw task change?
 Importantly, this is not a comparison of fw performance for two different values of $p_{bw}$ as before,
-but a comparison between fw and be performance for the same value of $p_{bw} = 5\%$.
+but a comparison between fw and bw performance for the same value of $p_{bw} = 5\%$.
 
-![fw- vs bw-perf for p_bw=5%](results/images/fw_vs_bw_perf_with_bidirectional_mask_over_number_of_layer_remaining_cut_accs.png)
+Beginning with `ratio_then_mean`:
 
-In the image above, I plot the ratio of fw- to bw-performance for models trained with $p_{bw} = 5\%$
-over the number of layers used, for different numbers of parameters.
-The numbers shown are always the average over 3 runs.
+![fw- vs bw- val-loss for p_bw=5% (ratio-then-mean)](results/images/fw_vs_bw_perf_with_bidirectional_mask_over_number_of_layer_remaining_cut_losses_ratio_then_mean.png)
 
 A few observations:
 
-1. As the number of layers is cut more and more, the performance of the bw task compared to the fw task drops off rapidly.
+-  As the number of layers is cut more and more, the performance of the bw task compared to the fw task drops off rapidly.
     This implies to me that the model learns the fw task, and performs that in the early layers,
     and then somehow manages to invert it into the bw task in the later layers.
-2. In the late layers&mdash;and especially in the late layers of the fairly deep networks&mdash;we see that the bw task
-    is much easier for the model than the fw task.
-3. The change from being better at the bw than the fw task goes in a sigmoid-like fashion starting from the first third or half
-    of the model until the very end (mostly, this is just eyeballing the plots). In the shallow models, this of course looks
-    pretty sudden.
+- This transformation tends to go pretty slowly through most layers, and then suddenly jump.
+- 
 
 To be clear, the absolute performance on both the fw and the bw task falls rapidly with every layer that is removed.
 However, as a trend, the later layers seem more important for the bw task, and the earlier layers for the fw task.
 
+Now let's look at the same thing, but calculated as `mean_then_ratio`:
+
+![fw- vs bw- val-loss for p_bw=5% (mean-then-ratio)](results/images/fw_vs_bw_perf_with_bidirectional_mask_over_number_of_layer_remaining_cut_losses_mean_then_ratio.png)
+
+The same trend as above holds, but to a less extreme degree. That means that the variance in results is pretty high.
 
 ### Future experiments
 
@@ -210,13 +246,11 @@ However, as a trend, the later layers seem more important for the bw task, and t
     from training bidirectionally.
 - Instead of the choice being between training on either both the fw and bw task or only the fw task,
     make it a choice between training on just the fw or just the bw task.
-- Finetune some open LLM (phi3 or whatever) on a dataset with this method,
+- Finetune some open LLM on a dataset with this method,
     then train it to perform as a ColBERT-replacement RAG tool.
 
 I'm not sure if I will actually get to any of those;
 I have a lot of other ideas I want to explore, and way to little money to do it all.
-
-
 
 ## Acknoledgements
 
