@@ -5,13 +5,25 @@ What if we don't just use a causal mask forward in time (fw), but with a probabi
 I can see three potential benefits from this:
 
 1. Forcing the model to learn to distinguish between a fw and bw causal mask, and adjust properly, 
-    may serve as a form of dataset augmentation that effectively increases the data diversity
-2. If your limiting factor for computation is data ingestion (like I've read it is for Cerebras, for example),
+    may serve as a form of **dataset augmentation** that effectively increases the data diversity.
+    This is similar to the different pre-training tasks from [Yi Tay et al.'s UL2](https://arxiv.org/abs/2205.05131)
+    (it is probably worse, but could be 1. an additional task that makes sense to sprinkle in in small amounts,
+    and 2. simpler to apply in finetuning of already pre-trained, causal LLMs).
+2. If your limiting factor for computation is **data ingestion** (like I've read it is for Cerebras, for example),
     ingesting the data once, then calculating the loss on both the fw and bw mask could lead to higher 
-    utilization of your accelerator
-3. A ColBERT replacement. That uses BERT-style masking, but the best open models use forward masking.
-    I thought it might make sense to enable those powerful models to also do the bw masking necessary to take,
-    for example, footnotes into account
+    utilization of your accelerator. I don't know if this is very relevant, but I wanted to mention it anyway.
+3. This could potentially be used to finetune causal LLMs into **BERT-alternatives**.
+
+    Normally, causal language models aren't so great for encoder-only tasks like RAG, because some tokens may
+    have relevant references pointing to them in later instead of earlier tokens, which will be ignored at that point.
+    For example, a footnote might come after the token in question, but be very important for interpreting it.
+    A fully causal model ignores those later tokens; but if we can do a forward pass with the fw task and one with the bw task,
+    and then combine the resulting embeddings somehow, we can include the context from all tokens.
+    
+    Again, UL2 is likely better for this, but training on a bw task can probably be applied in finetuning
+    to already-existing, fully causal models.
+    So this might enable ColBERT-style late-interaction RAG with extremely high-quality models over potentially
+    very long contexts.
 
 I have tested point 1 for now, and the results, while negative at the scales I trained at, show a promising scaling trend.
 I suspect that this actually works well!
@@ -53,11 +65,7 @@ Let's quickly work through points 2 and 3:
     I haven't tried yet.
     I unfortunately have limited amounts of money and time, as I am doing this privately, so I may never get to trying this out myself.
 
-    The basic idea would be to do a fw and a bw prediction on the same text, then use attentive pooling of some sort to produce the combined embeddings for each token, so that these embeddings can be used for ColBERT-style late-interaction RAG.
-    
-    The advantage would be that you could just fine-tune an open-source model (Llama3 or whatever else you want) to be able to do this, and get the advantage of its extremely high-quality representations.
-
-    This should just work; below, you will see that the bw-performance is excellent with $p_{bw} = 5\%$, so I suspect that fine-tuning on this task after the fact would work fine.
+    However, this should just work; below, you will see that the bw-performance is excellent with $p_{bw} = 5\%$, so I suspect that fine-tuning on this task after the fact would work fine.
 
 With that out of the way, I will now write about point 1, improving performance given a constant number of training tokens.
 
@@ -122,7 +130,7 @@ I compute the ratio independently for each of the training runs per setting,
 and independently for each of $500$ steps over the approximately $10$ epochs
 (for details, see the code provided in *plot_results.py*).
 
-Then, take the ratios falling into the range $\left[\mathrm{epoch}_{\mathrm{start}}, \mathrm{epoch}_{\mathrm{stop}}\right]$
+Then, take the ratios falling into the range $\left[\mathrm{epoch}_{\mathrm{start}} ... \mathrm{epoch}_{\mathrm{stop}}\right]$
 and plot them as a boxplot or violinplot.
 
 Below, you can see the violinplot for all available data ($\mathrm{epoch}_{\mathrm{start}} = 0, \mathrm{epoch}_{\mathrm{stop}} = 10$):
