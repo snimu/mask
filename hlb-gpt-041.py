@@ -841,6 +841,7 @@ def get_args() -> argparse.Namespace:
     args.model_scale = args.model_scale if isinstance(args.model_scale, list) else [args.model_scale]
     args.depth = args.depth if isinstance(args.depth, list) else [args.depth]
     args.width = args.width if isinstance(args.width, list) else [args.width]
+    args.num_heads = args.num_heads if isinstance(args.num_heads, list) else [args.num_heads]
     args.backward_prob = args.backward_prob if isinstance(args.backward_prob, list) else [args.backward_prob]
     args.adjust_backward_prob = args.adjust_backward_prob if isinstance(args.adjust_backward_prob, list) else [args.adjust_backward_prob]
 
