@@ -48,6 +48,8 @@ def load_xs_ys_avg_y(
         model_scale: float | None = None,
         depth: int | None = None,
         width: int | None = None,
+        num_heads: int | None = None,
+        seeds: list[int] | None = None,
         num_params: int | None = None,
         to_plot: str = "val_loss_fw",
         plot_over: Literal["step", "epoch", "epoch_unique_token", "token", "time_sec"] = "step",
@@ -66,8 +68,12 @@ def load_xs_ys_avg_y(
         filters &= (pl.col("depth") == depth)
     if width is not None:
         filters &= (pl.col("width") == width)
+    if num_heads is not None:
+        filters &= (pl.col("num_heads") == num_heads)
     if num_params is not None:
         filters &= (pl.col("num_params") == num_params)
+    if seeds is not None:
+        filters &= (pl.col("seed").is_in(seeds))
 
     df = pl.scan_csv(file).filter(filters).collect()
     df.sort("run_num")
@@ -208,8 +214,8 @@ def generate_distinct_colors(n):
         hue = i / n
         # Fixing saturation and lightness/value to 0.9 for bright colors
         # You can adjust these values for different color variations
-        lightness = 0.5
-        saturation = 0.9
+        lightness = 0.4
+        saturation = 1.0
         rgb = colorsys.hls_to_rgb(hue, lightness, saturation)
         hex_color = '#%02x%02x%02x' % (int(rgb[0]*255), int(rgb[1]*255), int(rgb[2]*255))
         colors.append(hex_color)
@@ -226,37 +232,43 @@ def plot_fw_bw(
         adjust_backward_prob: bool | None = None,
         depth: int | None = 8,
         width: int | None = 384,
+        num_heads: int | None = None,
+        seeds: list[int] | None = None,
         fw_only: bool = False,
         show: bool = True,
         loglog: bool = False,
         plot_all: bool = False,
 ) -> None:
-    settings = get_unique_settings(file, ["mask", "initial_backward_prob", "adjust_backward_prob", "depth", "width"])
+    settings = get_unique_settings(file, ["mask", "initial_backward_prob", "adjust_backward_prob", "depth", "width", "num_heads"])
 
     if mask is not None:
-        settings = [(ma, bp, ap, d, w) for ma, bp, ap, d, w in settings if ma == mask]
+        settings = [(ma, bp, ap, d, w, nh) for ma, bp, ap, d, w, nh in settings if ma == mask]
     if initial_backward_prob is not None:
-        settings = [(ma, bp, ap, d, w) for ma, bp, ap, d, w in settings if bp == initial_backward_prob or ma == "forward"]
+        settings = [(ma, bp, ap, d, w, nh) for ma, bp, ap, d, w, nh in settings if bp == initial_backward_prob or ma == "forward"]
     if adjust_backward_prob is not None:
-        settings = [(ma, bp, ap, d, w) for ma, bp, ap, d, w in settings if ap == adjust_backward_prob]
+        settings = [(ma, bp, ap, d, w, nh) for ma, bp, ap, d, w, nh in settings if ap == adjust_backward_prob]
     if depth is not None:
-        settings = [(ma, bp, ap, d, w) for ma, bp, ap, d, w in settings if d == depth]
+        settings = [(ma, bp, ap, d, w, nh) for ma, bp, ap, d, w, nh in settings if d == depth]
     if width is not None:
-        settings = [(ma, bp, ap, d, w) for ma, bp, ap, d, w in settings if w == width]
+        settings = [(ma, bp, ap, d, w, nh) for ma, bp, ap, d, w, nh in settings if w == width]
+    if num_heads is not None:
+        settings = [(ma, bp, ap, d, w, nh) for ma, bp, ap, d, w, nh in settings if nh == num_heads]
 
     colors = generate_distinct_colors(len(settings)*2)
-    col_num = 0
+    col_num = -1
 
-    for (mask_, initial_backward_prob_, adjust_backward_prob_, depth_, width_) in settings:
+    for (mask_, initial_backward_prob_, adjust_backward_prob_, depth_, width_, num_heads_) in settings:
+        col_num += 1
         for direction in ("fw",) if fw_only else ("fw", "bw"):
             color = colors[col_num]
-            col_num += 1
             xs, ys, avg_ys = load_xs_ys_avg_y(
                 file,
                 mask=mask_,
                 initial_backward_prob=initial_backward_prob_,
                 depth=depth_,
                 width=width_,
+                num_heads=num_heads_,
+                seeds=seeds,
                 to_plot=to_plot+f"_{direction}",
                 plot_over=plot_over,
                 adjust_backward_prob=adjust_backward_prob_,
@@ -275,18 +287,19 @@ def plot_fw_bw(
                 & (pl.col("adjust_backward_prob") == (False if mask_ == "forward" else adjust_backward_prob_))
                 & (pl.col("depth") == depth_)
                 & (pl.col("width") == width_)
+                & (pl.col("num_heads") == num_heads_)
+                & (pl.col("seed").is_in(seeds) if seeds is not None else True)
             ).collect()["num_params"][0]
             
             label = (
                 f"{direction}-perf, p_bw=({initial_backward_prob_}), "
-                f"depth={depth_}, width={width_}, #params={format_num_params(num_params)}"
+                f"depth={depth_}, width={width_}, num_heads={num_heads_}, #params={format_num_params(num_params)}"
                 f"{' (adjusted)' if adjust_backward_prob_ else ''}"
             )
             if loglog:
-                plt.loglog(xs, avg_ys, color=color if plot_all else None, label=label, linestyle=linestyle)
+                plt.loglog(xs, avg_ys, color=color, label=label, linestyle=linestyle)
             else:
-                plt.plot(xs, avg_ys, color=color if plot_all else None, label=label, linestyle=linestyle)
-
+                plt.plot(xs, avg_ys, color=color, label=label, linestyle=linestyle)
 
     fig = plt.gcf()
     fig.set_size_inches(12, 7)
@@ -318,6 +331,10 @@ def plot_fw_bw(
             variable_settings += "_width"
         else:
             fixed_settings += f"_{width=}"
+        if num_heads is None:
+            variable_settings += "_num_heads"
+        else:
+            fixed_settings += f"_{num_heads=}"
 
         fixed_settings += f"{'_fw_only' if fw_only else ''}{'_loglog' if loglog else ''}{'_allcurves' if plot_all else ''}"
 
@@ -893,20 +910,22 @@ def plot_fw_perf_with_fw_vs_bidirectional_mask_over_number_of_layer_remaining(
 if __name__ == "__main__":
     # file = "results/results_scaling_fw_bw.csv"
     file = "results/results_scaling_with_special_tokens_fw_bw.csv"
-    # plot_fw_bw(
-    #     file=file,
-    #     to_plot="val_losses",
-    #     plot_over="epoch",
-    #     mask=None,
-    #     adjust_backward_prob=False,
-    #     initial_backward_prob=0.05,
-    #     depth=32,
-    #     width=None,
-    #     fw_only=True,
-    #     show=True,
-    #     loglog=False,
-    #     plot_all=False,
-    # )
+    plot_fw_bw(
+        file=file,
+        to_plot="val_losses",
+        plot_over="epoch",
+        mask=None,
+        adjust_backward_prob=False,
+        initial_backward_prob=0.05,
+        depth=32,
+        width=2304,
+        num_heads=1,
+        seeds=[100, 102],
+        fw_only=True,
+        show=True,
+        loglog=False,
+        plot_all=False,
+    )
     # plot_perf_forward_by_perf_bideirectional_over_num_params(
     #     file=file,
     #     initial_backward_prob=0.05,
@@ -926,8 +945,8 @@ if __name__ == "__main__":
     #     adjust_backward_prob=False,
     #     to_plot="val_losses",
     #     direction="fw",
-    #     plot_over="epoch",
-    #     show=False,
+    #     plot_over="epoch_unique_token",
+    #     show=True,
     #     from_x_val=0,
     #     to_x_val=1,
     # )
@@ -939,11 +958,11 @@ if __name__ == "__main__":
     #     calculation_order="ratio_then_mean",
     #     show=False,
     # )
-    plot_fw_perf_with_fw_vs_bidirectional_mask_over_number_of_layer_remaining(
-        file=file,
-        initial_backward_prob=0.05,
-        adjust_backward_prob=False,
-        to_plot="cut_pplxs",
-        calculation_order="mean_then_ratio",
-        show=False,
-    )
+    # plot_fw_perf_with_fw_vs_bidirectional_mask_over_number_of_layer_remaining(
+    #     file=file,
+    #     initial_backward_prob=0.05,
+    #     adjust_backward_prob=False,
+    #     to_plot="cut_pplxs",
+    #     calculation_order="mean_then_ratio",
+    #     show=False,
+    # )
