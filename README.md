@@ -248,11 +248,11 @@ url: "https://github.com/tysam-code/hlb-gpt"
 If you for some reason want to cite this work, here is the BibTeX entry:
 
 ```bibtex
-@misc{snimu2024bidirectionalmasking,
-  title={Bidirectional Masking},
+@misc{snimu2024fwbwprediction,
+  title={Forward-Backward Prediction},
   author={Sebastian Nicolas Muller},
   year={2024},
   month={5},
-  url={https://github.com/snimu/mask}
+  url={https://github.com/snimu/https://github.com/snimu/blog/blob/main/contents/fw-bw-prediction/article.md}
 }
 ```
