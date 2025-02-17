@@ -15,7 +15,7 @@ Answer: Only a $5\%$ chance of doing a backward prediction in addition to a forw
 
 I can see three potential advantages of training on the bw task:
 
-1. Forcing the model to learn to distinguish between a fw and bw causal mask, and adjust properly, 
+1. Forcing the model to learn to distinguish between a fw and bw causal mask, and adjust properly,
     may serve as a form of **dataset augmentation** that effectively increases the data diversity,
     and thus allows a model to learn more from the same data than otherwise possible.
 2. You have a model that can perform the bw task. That might be useful.
@@ -96,7 +96,6 @@ and the intended benefits for downstream RAG tasks may actually come true.
 
 Now, let's look at how this behaves for different model scales.
 
-
 ### Performance by model scale
 
 Below, I show the ratio 1 between the fw performance of models trained with $p_{bw} = 0\%$ compared to those trained with $p_{bw} = 5\%$ (as described [above under Metrics](#metrics)) for models of different
@@ -145,7 +144,6 @@ Here is ($\mathrm{epoch}_{\mathrm{start}} = 5, \mathrm{epoch}_{\mathrm{stop}} = 
 
 ![(Violinplot) Ratio 1 by model size: epochs 5 to 10](results/images/violinplot_ratio_by_num_params_val_losses_epoch_start_5_stop_None.png)
 
-
 Observations:
 
 - The scaling effects are much stronger here!
@@ -188,7 +186,7 @@ Some intersting things are going on here:
     2. Models trained with $p_{bw} = 5\%$ are forced to do a lot of good work in early layers,
         then take the bw task into consideration in the middle layers, and consolidate in late layers.
         Models trained with $p_{bw} = 0\%$ on the other hand show a more constant improvement in performance.
-    
+
     It might be interesting to merge models trained with $p_{bw} = 0\%$ with ones trained with $p_{bw} = 5\%$.
 
 And here is `mean_then_ratio`:
@@ -209,7 +207,7 @@ Beginning with `ratio_then_mean`:
 
 A few observations:
 
--  As the number of layers is cut more and more, the performance of the bw task compared to the fw task drops off rapidly.
+- As the number of layers is cut more and more, the performance of the bw task compared to the fw task drops off rapidly.
     This implies to me that the model learns the fw task, and performs that in the early layers,
     and then somehow manages to invert it into the bw task in the later layers.
 - This transformation tends to go pretty slowly through most layers, and then suddenly jump.
