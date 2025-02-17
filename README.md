@@ -11,34 +11,22 @@ Answer: Only a $5\%$ chance of doing a backward prediction in addition to a forw
 - **bw task/prediction:** Short for the backward task/prediction
 - **$p_{bw}$:** The probability of doing a bw prediction *in addition to* a fw prediction (see [Methods](#methods))
 
-
-
 ## Why?
 
-I can see four potential advantages of training on the bw task:
+I can see three potential advantages of training on the bw task:
 
 1. Forcing the model to learn to distinguish between a fw and bw causal mask, and adjust properly, 
     may serve as a form of **dataset augmentation** that effectively increases the data diversity,
     and thus allows a model to learn more from the same data than otherwise possible.
-2. Your limiting factor for computation might be **data ingestion**, while your compute is cheap.
-    In that case, ingesting the data once, then calculating the loss on both the fw and bw mask, could lead to higher 
-    utilization of your accelerator. After all, changing from fw to bw task only requires a slight data augmentation (moving inputs and targets relative to each other) and rotating the attention mask, both of which can be done on-device. I'm not in the hardware game, so I'm not sure of this advantage, but it was the motivating idea for this project.
-3. You have a model that can perform the bw task. That might be useful.
-4. RAG. This is pure speculation and I didn't test it, but models trained with a bit of the bw task
-    might be easier to finetune into RAG models than fw-task-only ones. For RAG, the causal mask is in the way;
-    the models must take not only past information, but also future information into account. Else, they wouldn't be able to take things like footnotes into account, for example. Again, I didn't explicitely test this,
-    but I will take an improvement on the bw task without a degredation in the fw task as weak evidence for this working.
-
+2. You have a model that can perform the bw task. That might be useful.
+3. Masked prediction for RAG / infilling. This is pure speculation and I didn't test it, but models trained with a bit of the bw task might be easier to finetune into RAG models with a bidirectional mask than fw-task-only ones. This is especially true if combined with [MEAP](https://arxiv.org/abs/2502.07490), which does causal prediction on masked input sequences. This, combined with backward prediction, would make the model much closer to a bidirectional Masked Language Model (MLM).
 
 ## Methods
 
 I trained [hlb-gpt v0.4.1](https://github.com/tysam-code/hlb-gpt) for 10 epochs on wikitext. I perform the fw task and, with probability $p_{bw}$,
 also the bw task on the same tokens.
 I accumulate the losses and then do a backward pass.
-The reasons for doing either a fw or both a fw and a bw prediction at the same time are twofold:
-
-1. Doing both at the same time and on the same batch was done to see if this is useful for easing data ingestion concerns.
-2. Accumulating the losses before the update step was done to prevent the model from memorizing the tokens in the fw task and generalizing poorly on the bw task as a result.
+Why didn't I do either only a fw or only a bw prediction at the same time? Well, I should have; but this is an old project that I'm just now re-visiting, and that's the choice I made back then.
 
 Inspired by [Yi Tay et al.'s UL2](https://arxiv.org/abs/2205.05131),
 I've informed the models of their task by giving them a special token at the beginning of text
@@ -52,7 +40,7 @@ This is done for different values of $p_{bw}$: $0\%$ and $5\%$
 
 After a model is trained for 10 epochs, I remove the transformer layers one by one, starting from the back,
 and evaluate the resulting model after each removal. I hope that this gives me some insights into
-which parts of the model are more important for the fw and bw predictions, respectively. 
+which parts of the model are more important for the fw and bw predictions, respectively.
 My first hypothesis was that early layers are used to distinguish between the fw and bw task,
 and thus the positive effects of dual masking can only occur in deep networks
 that can make use of the knowledge extracted in the early layers.
@@ -60,19 +48,9 @@ that can make use of the knowledge extracted in the early layers.
 Per setting (depth, width, $p_bw$, or using fw mask only), I train three times.
 I've saved all results, but below, will only show you the average over all three runs for each setting.
 
-## Results
-
-Let's quickly get the results about data-ingestion out of the way. Fixing data ingestion issues (if they are even a real thing) is unlikely to happen this way. Setting $p_{bw} = 10\%$ is already much worse than $p_{bw} = 5\%$, so backward masking at a significant level is undesireable.
-
-With that out of the way, I will now write about improving performance given a constant number of training tokens.
-
 ### Background info
 
-First, a caveat: I always used both a fw- and a bw-mask for the same tokens, whenever I did use a bw-mask.
-I think that it's possible that the models would perform better if the fw- and bw-mask were applied on different batches,
-but I went into the experiments with data ingestion in mind and finished those experiments.
-
-Unless specifically stated otherwise, $p_{bw} = 5\%$ for all of them, because with $p_{bw} = 10\%$,
+Unless specifically stated otherwise, $p_{bw} = 5\%$ for all experiments where $p_{bw}$ is non-zero, because with $p_{bw} = 10\%$,
 the relative performance between models trained with the fw-mask only and those trained with a bidirectional mask
 was very skewed towards the fw-only models.
 
@@ -137,7 +115,7 @@ Below, you can see the violinplot for all available data ($\mathrm{epoch}_{\math
 
 A few thoughts:
 
-- There seems to be an inverse scaling law for small model sizes.
+- There seems to be an inverse scaling law for small model sizes, reminiscent of [Better & Faster Large Language Models via Multi-token Prediction](https://arxiv.org/abs/2404.19737).
     This has its minimum at $106.8$ million parameters.
 - Beyond that, positive scaling laws apply.
     As the number of parameters grows, the ratio increases as well,
@@ -256,9 +234,9 @@ The same trend as above holds, but to a less extreme degree. That means that the
 
 ## Acknowledgements
 
-As always, mostly based on [Fern](https://github.com/tysam-code)'s [hlb-gpt](https://github.com/tysam-code/hlb-gpt).
+The code is modified from [Fern](https://github.com/tysam-code)'s [hlb-gpt](https://github.com/tysam-code/hlb-gpt).
 
-```
+```text
 cff-version: 1.2.0
 message: "Citations would be appreciated if you end up using this tool! I currently go by Fern, no last name given."
 authors:
@@ -271,11 +249,12 @@ url: "https://github.com/tysam-code/hlb-gpt"
 
 If you for some reason want to cite this work, here is the BibTeX entry:
 
-```
+```bibtex
 @misc{snimu2024bidirectionalmasking,
   title={Bidirectional Masking},
   author={Sebastian Nicolas Muller},
   year={2024},
+  month={5},
   url={https://github.com/snimu/mask}
 }
 ```
